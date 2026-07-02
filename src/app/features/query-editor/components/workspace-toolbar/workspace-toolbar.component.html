@@ -1,0 +1,29 @@
+<div class="source-strip" aria-label="Selected sources">
+  @for (table of store.selectedTables(); track table.id) {
+    <span class="source-chip">
+      <span class="source-chip__icon" aria-hidden="true"></span>
+      {{ table.label }}
+      <button
+        type="button"
+        title="Remove source"
+        aria-label="Remove source"
+        (click)="store.removeSourceTable(table.id)"
+      >
+        x
+      </button>
+    </span>
+  }
+</div>
+
+<div class="toolbar-actions">
+  <button class="icon-button icon-button--wide" type="button" title="SQL" aria-label="SQL">SQL</button>
+  <button
+    class="icon-button icon-button--wide"
+    type="button"
+    title="Validate"
+    aria-label="Validate"
+    (click)="store.save()"
+  >
+    OK
+  </button>
+</div>

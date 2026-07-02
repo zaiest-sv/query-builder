@@ -1,1 +1,54 @@
-/* You can add global styles to this file, and also import other style files */
+:root {
+  --app-bg: #eef2f5;
+  --app-surface: #ffffff;
+  --app-surface-muted: #f7f9fb;
+  --app-surface-subtle: #fbfcfd;
+  --app-border: #d8e0e7;
+  --app-border-strong: #aebac6;
+  --app-text: #1c2633;
+  --app-muted: #667789;
+  --app-faint: #8a99a8;
+  --app-accent: #126b73;
+  --app-accent-strong: #0a5259;
+  --app-accent-soft: #e4f3f1;
+  --app-blue: #2563a9;
+  --app-blue-soft: #e8f1fb;
+  --app-success: #12724d;
+  --app-warning: #a15c00;
+  --app-danger: #b42318;
+  --app-grid-header: #f3f6f9;
+  --app-shadow: 0 18px 45px rgba(28, 38, 51, 0.12);
+  --app-shadow-soft: 0 10px 24px rgba(28, 38, 51, 0.08);
+  color-scheme: light;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--app-text);
+  background: var(--app-bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}

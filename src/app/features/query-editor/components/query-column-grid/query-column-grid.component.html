@@ -1,0 +1,134 @@
+<div class="column-grid-shell" [class.column-grid-shell--resizing]="isColumnGridResizing()">
+  <div
+    class="column-grid-resizer"
+    role="separator"
+    tabindex="0"
+    aria-label="Resize query grid"
+    aria-orientation="horizontal"
+    [attr.aria-valuemin]="minQueryGridHeight"
+    [attr.aria-valuemax]="maxQueryGridHeight"
+    [attr.aria-valuenow]="queryGridHeight()"
+    (mousedown)="startColumnGridMouseResize($event)"
+    (keydown)="adjustColumnGridHeight($event)"
+  >
+    <span aria-hidden="true"></span>
+  </div>
+
+  <div class="column-grid" role="grid" aria-label="Query output columns">
+    <div class="grid-heading" role="row">
+      <span>Visible</span>
+      <span>Expression</span>
+      <span>Column Name</span>
+      <span>Sorting</span>
+      <span>Grouping/Agg</span>
+      <span>Criteria</span>
+      <span>Or</span>
+      <span>Or</span>
+      <span></span>
+    </div>
+
+    @for (
+      column of store.selectedColumns();
+      track column.id;
+      let first = $first;
+      let last = $last
+    ) {
+      <div
+        class="grid-row"
+        role="row"
+        tabindex="0"
+        [class.grid-row--active]="isColumnActive(column.fieldId)"
+        [attr.aria-selected]="isColumnActive(column.fieldId)"
+        (click)="selectColumnField(column.fieldId, $event)"
+        (keydown)="handleColumnRowKeydown(column.id, column.fieldId, $event)"
+      >
+        <label class="checkbox-cell">
+          <input
+            type="checkbox"
+            [checked]="column.visible"
+            (change)="toggleColumnVisibility(column.id, $event)"
+          />
+        </label>
+        <span class="expression-cell">{{ column.expression }}</span>
+        <input
+          class="inline-input"
+          type="text"
+          [value]="column.alias"
+          (input)="updateColumnAlias(column.id, $event)"
+          aria-label="Column alias"
+        />
+        <select
+          class="inline-select"
+          [value]="column.sortDirection"
+          (change)="updateColumnSort(column.id, $event)"
+          aria-label="Column sort"
+        >
+          @for (sortDirection of sortDirections; track sortDirection) {
+            <option [value]="sortDirection">{{ sortDirection }}</option>
+          }
+        </select>
+        <label class="checkbox-cell">
+          <input
+            type="checkbox"
+            [checked]="column.groupBy === true"
+            (change)="updateColumnGroupBy(column.id, $event)"
+          />
+        </label>
+        <input
+          class="inline-input"
+          type="text"
+          [value]="column.criteria || ''"
+          (input)="updateColumnCriteria(column.id, $event)"
+          aria-label="Column criteria"
+        />
+        <input
+          class="inline-input"
+          type="text"
+          [value]="column.orCriteria?.[0] || ''"
+          (input)="updateColumnOrCriteria(column.id, 0, $event)"
+          aria-label="Column OR criteria 1"
+        />
+        <input
+          class="inline-input"
+          type="text"
+          [value]="column.orCriteria?.[1] || ''"
+          (input)="updateColumnOrCriteria(column.id, 1, $event)"
+          aria-label="Column OR criteria 2"
+        />
+        <div class="row-actions">
+          <button
+            class="icon-button"
+            type="button"
+            title="Move up"
+            aria-label="Move column up"
+            [disabled]="first"
+            (click)="moveColumn(column.id, -1, $event)"
+          >
+            <span class="icon-button__arrow icon-button__arrow--up" aria-hidden="true"></span>
+          </button>
+          <button
+            class="icon-button"
+            type="button"
+            title="Move down"
+            aria-label="Move column down"
+            [disabled]="last"
+            (click)="moveColumn(column.id, 1, $event)"
+          >
+            <span class="icon-button__arrow icon-button__arrow--down" aria-hidden="true"></span>
+          </button>
+          <button
+            class="icon-button icon-button--danger"
+            type="button"
+            title="Remove"
+            aria-label="Remove column"
+            (click)="removeColumn(column.id, $event)"
+          >
+            <span class="icon-button__remove" aria-hidden="true"></span>
+          </button>
+        </div>
+      </div>
+    } @empty {
+      <div class="grid-empty">No output columns selected.</div>
+    }
+  </div>
+</div>

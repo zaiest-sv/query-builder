@@ -1,0 +1,389 @@
+<header class="properties-heading">
+  <div>
+    <h2>Properties</h2>
+    <span>{{ store.canvasSelection().kind }}</span>
+  </div>
+  @if (store.canvasSelection().kind !== 'none') {
+    <button
+      type="button"
+      title="Clear selection"
+      aria-label="Clear selection"
+      (click)="clearSelection()"
+    >
+      x
+    </button>
+  }
+</header>
+
+<div class="properties-body">
+  @switch (store.canvasSelection().kind) {
+    @case ('table') {
+      @if (store.selectedCanvasTable(); as table) {
+        <section class="property-section">
+          <h3>{{ table.label }}</h3>
+          <div class="property-grid">
+            <span>Schema</span>
+            <strong>{{ table.schema }}</strong>
+            <span>Table</span>
+            <strong>{{ table.name }}</strong>
+            <span>Alias</span>
+            <strong>{{ table.alias }}</strong>
+            <span>Fields</span>
+            <strong>{{ table.fields.length }}</strong>
+            <span>Selected</span>
+            <strong>{{ selectedColumnsForTable(table.id) }}</strong>
+          </div>
+          <div class="split-input-row">
+            <label class="input-row">
+              Canvas X
+              <input
+                type="number"
+                [value]="tablePositionX(table.id)"
+                (change)="updateTablePositionX(table.id, $event)"
+              />
+            </label>
+            <label class="input-row">
+              Canvas Y
+              <input
+                type="number"
+                [value]="tablePositionY(table.id)"
+                (change)="updateTablePositionY(table.id, $event)"
+              />
+            </label>
+          </div>
+          <div class="action-row">
+            <button
+              type="button"
+              class="secondary-button"
+              (click)="includeAllTableFields(table.id)"
+            >
+              Include all fields
+            </button>
+            <button type="button" class="secondary-button" (click)="clearTableFields(table.id)">
+              Clear table fields
+            </button>
+          </div>
+        </section>
+
+        <section class="property-section">
+          <div class="section-title">
+            <h3>Joins</h3>
+            <span>{{ joinsForTable(table.id).length }}</span>
+          </div>
+          <div class="join-list">
+            @for (join of joinsForTable(table.id); track join.id) {
+              <button
+                type="button"
+                class="join-row"
+                [class.join-row--warning]="join.status === 'warning'"
+                [class.join-row--invalid]="join.status === 'error'"
+                [attr.title]="joinIssueSummary(join)"
+                (click)="selectJoin(join.id)"
+              >
+                <span>{{ join.type }}</span>
+                <em>{{ join.conditionCount }}</em>
+                <strong>{{ join.expression }}</strong>
+              </button>
+            } @empty {
+              <p class="muted">No joins for this source.</p>
+            }
+          </div>
+        </section>
+
+        <footer class="properties-actions">
+          <button type="button" class="danger-button" (click)="removeSourceTable(table.id)">
+            Remove source
+          </button>
+        </footer>
+      }
+    }
+
+    @case ('field') {
+      @if (store.selectedCanvasField(); as field) {
+        <section class="property-section">
+          <h3>{{ field.label }}</h3>
+          <div class="property-grid">
+            <span>Table</span>
+            <strong>{{ tableForField(field)?.label ?? field.tableId }}</strong>
+            <span>Name</span>
+            <strong>{{ field.name }}</strong>
+            <span>Type</span>
+            <strong>{{ field.type }}</strong>
+            <span>Nullable</span>
+            <strong>{{ field.nullable ? 'Yes' : 'No' }}</strong>
+          </div>
+        </section>
+
+        <label class="toggle-row">
+          <input
+            type="checkbox"
+            [checked]="isFieldSelected(field.id)"
+            (change)="toggleFieldColumn(field.id, $event)"
+          />
+          Include in query columns
+        </label>
+
+        @if (columnForField(field.id); as column) {
+          <section class="property-section">
+            <div class="section-title">
+              <h3>Column</h3>
+              <span>{{ column.visible ? 'visible' : 'hidden' }}</span>
+            </div>
+            <label class="input-row">
+              Alias
+              <input
+                type="text"
+                [value]="column.alias"
+                (input)="updateColumnAlias(column.id, $event)"
+              />
+            </label>
+            <div class="split-input-row">
+              <label class="toggle-row">
+                <input
+                  type="checkbox"
+                  [checked]="column.visible"
+                  (change)="toggleColumnVisibility(column.id, $event)"
+                />
+                Visible
+              </label>
+              <label class="toggle-row">
+                <input
+                  type="checkbox"
+                  [checked]="column.groupBy === true"
+                  (change)="updateColumnGroupBy(column.id, $event)"
+                />
+                Group by
+              </label>
+            </div>
+            <label class="input-row">
+              Sorting
+              <select [value]="column.sortDirection" (change)="updateColumnSort(column.id, $event)">
+                @for (sortDirection of sortDirections; track sortDirection) {
+                  <option [value]="sortDirection">{{ sortDirection }}</option>
+                }
+              </select>
+            </label>
+            <label class="input-row">
+              Criteria
+              <input
+                type="text"
+                [value]="column.criteria || ''"
+                (input)="updateColumnCriteria(column.id, $event)"
+              />
+            </label>
+            <div class="split-input-row">
+              <label class="input-row">
+                Or
+                <input
+                  type="text"
+                  [value]="column.orCriteria?.[0] || ''"
+                  (input)="updateColumnOrCriteria(column.id, 0, $event)"
+                />
+              </label>
+              <label class="input-row">
+                Or
+                <input
+                  type="text"
+                  [value]="column.orCriteria?.[1] || ''"
+                  (input)="updateColumnOrCriteria(column.id, 1, $event)"
+                />
+              </label>
+            </div>
+          </section>
+        }
+
+        <section class="property-section">
+          <div class="section-title">
+            <h3>Filters</h3>
+            <span>{{ filtersForField(field.id).length }}</span>
+          </div>
+          <div class="filter-list">
+            @for (filter of filtersForField(field.id); track filter.id) {
+              <div class="filter-card">
+                <label class="input-row">
+                  Operator
+                  <select
+                    [value]="filter.operator"
+                    (change)="updateFilterOperator(filter.id, $event)"
+                  >
+                    @for (operator of filterOperators; track operator) {
+                      <option [value]="operator">{{ filterOperatorLabel(operator) }}</option>
+                    }
+                  </select>
+                </label>
+                <label class="input-row">
+                  Value
+                  <input
+                    type="text"
+                    [value]="filter.value"
+                    [disabled]="filter.operator === 'isEmpty'"
+                    (input)="updateFilterValue(filter.id, $event)"
+                  />
+                </label>
+                <label class="input-row">
+                  Parameter
+                  <input
+                    type="text"
+                    [value]="filter.parameterName"
+                    (input)="updateFilterParameter(filter.id, $event)"
+                  />
+                </label>
+                <button type="button" class="danger-link" (click)="removeFilter(filter.id)">
+                  Remove filter
+                </button>
+              </div>
+            } @empty {
+              <p class="muted">No filters for this field.</p>
+            }
+          </div>
+          <button type="button" class="secondary-button" (click)="addFilter(field.id)">
+            Add filter
+          </button>
+        </section>
+      }
+    }
+
+    @case ('join') {
+      @if (store.selectedCanvasJoin(); as join) {
+        <section class="property-section">
+          <div class="section-title">
+            <h3>Join</h3>
+            <span
+              class="status-pill"
+              [class.status-pill--warning]="join.status === 'warning'"
+              [class.status-pill--invalid]="join.status === 'error'"
+            >
+              {{ join.status }}
+            </span>
+          </div>
+          <label class="input-row">
+            Type
+            <select [value]="join.type" (change)="updateJoinType(join.id, $event)">
+              @for (joinType of joinTypes; track joinType) {
+                <option [value]="joinType">{{ joinType }}</option>
+              }
+            </select>
+          </label>
+          <div class="property-grid">
+            <span>From</span>
+            <strong>{{ join.fromLabel }}</strong>
+            <span>To</span>
+            <strong>{{ join.toLabel }}</strong>
+          </div>
+          @if (join.issues.length > 0) {
+            <div class="issue-list">
+              @for (issue of join.issues; track issue.message + issue.conditionId) {
+                <p
+                  [class.issue--warning]="issue.level === 'warning'"
+                  [class.issue--invalid]="issue.level === 'error'"
+                >
+                  {{ issue.message }}
+                </p>
+              }
+            </div>
+          }
+        </section>
+
+        <section class="property-section">
+          <div class="section-title">
+            <h3>Conditions</h3>
+            <span>{{ join.conditions.length }}</span>
+          </div>
+          <div class="condition-list">
+            @for (condition of join.conditions; track condition.id; let index = $index) {
+              <div
+                class="condition-row"
+                [class.condition-row--warning]="condition.status === 'warning'"
+                [class.condition-row--invalid]="condition.status === 'error'"
+              >
+                <span class="condition-index">{{ index + 1 }}</span>
+                <label>
+                  Left field
+                  <select
+                    [value]="condition.fromFieldId"
+                    (change)="updateJoinConditionFromField(join.id, condition.id, $event)"
+                  >
+                    @for (field of fieldsForTable(join.fromTableId); track field.id) {
+                      <option [value]="field.id">{{ field.name }}</option>
+                    }
+                  </select>
+                </label>
+                <label>
+                  Operator
+                  <select
+                    [value]="condition.operator"
+                    (change)="updateJoinConditionOperator(join.id, condition.id, $event)"
+                  >
+                    @for (operator of joinOperators; track operator) {
+                      <option [value]="operator">{{ joinOperatorLabel(operator) }}</option>
+                    }
+                  </select>
+                </label>
+                <label>
+                  Right field
+                  <select
+                    [value]="condition.toFieldId"
+                    (change)="updateJoinConditionToField(join.id, condition.id, $event)"
+                  >
+                    @for (field of fieldsForTable(join.toTableId); track field.id) {
+                      <option [value]="field.id">{{ field.name }}</option>
+                    }
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  class="condition-remove"
+                  title="Remove condition"
+                  aria-label="Remove condition"
+                  [disabled]="join.conditions.length <= 1"
+                  (click)="removeJoinCondition(join.id, condition.id)"
+                >
+                  x
+                </button>
+                @if (condition.issues.length > 0) {
+                  <p
+                    class="condition-issue"
+                    [class.condition-issue--invalid]="condition.status === 'error'"
+                  >
+                    {{ conditionIssueSummary(condition) }}
+                  </p>
+                }
+              </div>
+            }
+          </div>
+          <button
+            type="button"
+            class="secondary-button"
+            [disabled]="!canAddJoinCondition(join.id)"
+            [attr.title]="suggestedJoinConditionLabel(join.id)"
+            (click)="addJoinCondition(join.id)"
+          >
+            Add condition
+          </button>
+          @if (suggestedJoinConditionLabel(join.id); as suggestion) {
+            <p class="condition-suggestion">Next suggestion: {{ suggestion }}</p>
+          }
+          <code>{{ join.expression }}</code>
+        </section>
+
+        <footer class="properties-actions">
+          <button type="button" class="danger-button" (click)="removeJoin(join.id)">
+            Remove join
+          </button>
+        </footer>
+      } @else {
+        <section class="empty-state">
+          <h3>No join selected</h3>
+          <p>The selected join is no longer available.</p>
+        </section>
+      }
+    }
+
+    @default {
+      <section class="empty-state">
+        <h3>No selection</h3>
+        <p>Select a table, field, or join on the canvas.</p>
+      </section>
+    }
+  }
+</div>

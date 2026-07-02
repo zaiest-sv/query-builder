@@ -1,0 +1,226 @@
+<div class="canvas-header">
+  <div>
+    <h2>Main Query</h2>
+    <span>{{ store.selectedTables().length }} sources selected</span>
+  </div>
+  <span class="metric-pill">{{ store.filteredSourceRows().length }} mock rows</span>
+</div>
+
+<div
+  class="query-canvas"
+  #canvasViewport
+  [class.query-canvas--table-drop-target]="isTableDropTarget()"
+  (dragover)="allowDatasourceTableDrop($event)"
+  (dragleave)="leaveDatasourceTableDrop($event)"
+  (drop)="dropDatasourceTable($event)"
+>
+  <svg
+    class="join-layer"
+    aria-hidden="true"
+    [attr.viewBox]="joinLayerViewBox()"
+    [attr.width]="joinLayerWidth()"
+    [attr.height]="joinLayerHeight()"
+  >
+    <defs>
+      <marker
+        id="join-arrow"
+        viewBox="0 0 10 10"
+        refX="8"
+        refY="5"
+        markerWidth="6"
+        markerHeight="6"
+        orient="auto-start-reverse"
+      >
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"></path>
+      </marker>
+    </defs>
+
+    @for (path of joinPaths(); track path.key) {
+      <path
+        class="join-path"
+        [class.join-path--active]="isJoinActive(path.joinId)"
+        [class.join-path--warning]="path.status === 'warning'"
+        [class.join-path--invalid]="path.status === 'error'"
+        [attr.d]="path.path"
+        marker-end="url(#join-arrow)"
+        (click)="selectJoin(path.joinId, $event)"
+      ></path>
+      <circle
+        class="join-node"
+        [class.join-node--active]="isJoinActive(path.joinId)"
+        [class.join-node--warning]="path.status === 'warning'"
+        [class.join-node--invalid]="path.status === 'error'"
+        [attr.cx]="path.startX"
+        [attr.cy]="path.startY"
+        r="3.5"
+        (click)="selectJoin(path.joinId, $event)"
+      ></circle>
+    }
+    @if (joinDragPreview(); as preview) {
+      <path
+        class="join-preview-path"
+        [class.join-preview-path--condition]="preview.mode === 'condition'"
+        [class.join-preview-path--invalid]="preview.mode === 'invalid'"
+        [attr.d]="preview.path"
+      ></path>
+      <circle
+        class="join-preview-node"
+        [class.join-preview-node--condition]="preview.mode === 'condition'"
+        [class.join-preview-node--invalid]="preview.mode === 'invalid'"
+        [attr.cx]="preview.endX"
+        [attr.cy]="preview.endY"
+        r="5"
+      ></circle>
+    }
+  </svg>
+
+  <div class="canvas-card-grid">
+    @for (table of store.selectedTables(); track table.id; let index = $index) {
+      <article
+        class="table-card"
+        [class.table-card--selected]="isCanvasTableSelected(table.id)"
+        [class.table-card--dragging]="activeTableDragId() === table.id"
+        [style.left.px]="tablePositionX(table.id, index)"
+        [style.top.px]="tablePositionY(table.id, index)"
+        (click)="selectCanvasTable(table.id)"
+      >
+        <header
+          class="table-card__header"
+          [attr.aria-grabbed]="activeTableDragId() === table.id"
+          (pointerdown)="startTablePointerDrag(table.id, index, $event)"
+        >
+          <button
+            class="table-card__menu"
+            type="button"
+            title="Table menu"
+            aria-label="Table menu"
+            (click)="openTableMenu(table.id, $event)"
+          >
+            <span class="table-card__menu-icon" aria-hidden="true"></span>
+          </button>
+          <div>
+            <strong>{{ table.label }}</strong>
+            <span>{{ table.schema }}.{{ table.name }}</span>
+          </div>
+          <button
+            class="table-card__close"
+            type="button"
+            title="Remove source"
+            aria-label="Remove source"
+            (click)="removeCanvasTable(table.id, $event)"
+          >
+            <span class="table-card__close-icon" aria-hidden="true"></span>
+          </button>
+        </header>
+
+        @if (isTableMenuOpen(table.id)) {
+          <div class="table-menu" (click)="$event.stopPropagation()">
+            <button type="button" (click)="toggleHideUnusedFields(table.id)">
+              {{ hiddenUnusedTableIds().has(table.id) ? 'Show All Fields' : 'Hide Unused Fields' }}
+            </button>
+            <button type="button" (click)="toggleSortFields(table.id)">
+              {{
+                sortedTableIds().has(table.id)
+                  ? 'Use Original Field Order'
+                  : 'Sort Fields Alphabetically'
+              }}
+            </button>
+            <label class="table-menu__filter">
+              <span>Filter Fields By Name</span>
+              <input
+                type="search"
+                [value]="fieldFilterTerm(table.id)"
+                (input)="setFieldFilterTerm(table.id, $event)"
+                aria-label="Filter table fields by name"
+              />
+            </label>
+            <button type="button" (click)="checkAllFields(table.id)">Check All</button>
+            <button type="button" (click)="uncheckAllFields(table.id)">Uncheck All</button>
+            <button type="button" (click)="openTableProperties(table.id)">Properties</button>
+          </div>
+        }
+
+        <div class="table-card__fields">
+          @for (field of visibleFieldsForTable(table); track field.id) {
+            <div
+              #fieldRow
+              class="canvas-field-row"
+              [attr.data-field-id]="field.id"
+              [class.canvas-field-row--selected]="isFieldSelected(field.id)"
+              [class.canvas-field-row--active]="isFieldActive(field.id)"
+              [class.canvas-field-row--joined]="isFieldJoined(field.id)"
+              [class.canvas-field-row--join-source]="draggedJoinFieldId() === field.id"
+              [class.canvas-field-row--join-target]="canDropJoinOn(field.id)"
+              [class.canvas-field-row--join-blocked]="isJoinDropBlocked(field.id)"
+              [attr.aria-label]="'Select field ' + field.label + '. Drag to create join.'"
+              (click)="selectCanvasField(field.id, $event)"
+              (pointerdown)="startJoinPointerDrag(field.id, $event)"
+            >
+              <span class="join-handle" aria-hidden="true"></span>
+              <label class="field-check">
+                <input
+                  type="checkbox"
+                  [checked]="isFieldSelected(field.id)"
+                  (change)="toggleCanvasField(field.id, $event)"
+                />
+              </label>
+              <span class="field-name">{{ field.name }}</span>
+              <span class="field-type">{{ field.type }}</span>
+            </div>
+          } @empty {
+            <div class="table-card__empty-fields">No matching fields</div>
+          }
+        </div>
+
+        @if (joinsForTable(table.id).length > 0) {
+          <footer class="join-list">
+            @for (join of joinsForTable(table.id); track join.id) {
+              <div
+                class="join-chip"
+                [class.join-chip--active]="isJoinActive(join.id)"
+                [class.join-chip--warning]="join.status === 'warning'"
+                [class.join-chip--invalid]="join.status === 'error'"
+                [attr.title]="joinIssueSummary(join)"
+                (click)="selectJoin(join.id, $event)"
+              >
+                <select
+                  class="join-type-select"
+                  [value]="join.type"
+                  aria-label="Join type"
+                  (click)="$event.stopPropagation()"
+                  (change)="updateJoinType(join.id, $event)"
+                >
+                  @for (joinType of joinTypes; track joinType) {
+                    <option [value]="joinType">{{ joinType }}</option>
+                  }
+                </select>
+                <span class="join-condition-count">{{ join.conditionCount }}</span>
+                <span>{{ join.expression }}</span>
+                <button
+                  type="button"
+                  title="Remove join"
+                  aria-label="Remove join"
+                  (click)="removeJoin(join.id, $event)"
+                >
+                  x
+                </button>
+              </div>
+            }
+          </footer>
+        }
+      </article>
+    }
+  </div>
+
+  @if (joinDropHint(); as hint) {
+    <div
+      class="join-drop-hint"
+      [class.join-drop-hint--condition]="hint.mode === 'condition'"
+      [class.join-drop-hint--invalid]="hint.mode === 'invalid'"
+      [style.left.px]="hint.x"
+      [style.top.px]="hint.y"
+    >
+      {{ hint.message }}
+    </div>
+  }
+</div>

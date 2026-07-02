@@ -1,12 +1,11 @@
-import { Component, signal } from '@angular/core';
-import { RouterOutlet } from '@angular/router';
+import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { QueryEditorComponent } from './features/query-editor/query-editor.component';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet],
+  imports: [QueryEditorComponent],
   templateUrl: './app.html',
-  styleUrl: './app.css'
+  styleUrl: './app.css',
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class App {
-  protected readonly title = signal('query-builder');
-}
+export class App {}

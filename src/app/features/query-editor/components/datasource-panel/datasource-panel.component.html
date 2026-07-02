@@ -1,0 +1,135 @@
+<div class="panel-tabs">
+  <button class="panel-tab panel-tab--active" type="button">Datasource</button>
+  <button class="panel-tab" type="button">Subquery</button>
+</div>
+
+<label class="search-box">
+  <span aria-hidden="true">Find</span>
+  <input
+    type="search"
+    [value]="store.searchTerm()"
+    (input)="setSearchTerm($event)"
+    aria-label="Find datasource fields"
+  />
+</label>
+
+<div class="schema-tree">
+  @for (group of store.filteredMetadata(); track group.id) {
+    <details class="tree-group" open>
+      <summary>
+        <span class="tree-icon tree-icon--group" aria-hidden="true"></span>
+        <span>{{ group.label }}</span>
+      </summary>
+
+      @for (table of group.tables; track table.id) {
+        <div class="tree-table">
+          <button
+            class="tree-toggle tree-action"
+            type="button"
+            [attr.aria-expanded]="isTableExpanded(table.id)"
+            [attr.aria-label]="
+              isTableExpanded(table.id)
+                ? 'Collapse fields for ' + table.label
+                : 'Expand fields for ' + table.label
+            "
+            (click)="toggleTableExpanded(table.id, $event)"
+          >
+            <span
+              class="tree-toggle__chevron"
+              [class.tree-toggle__chevron--expanded]="isTableExpanded(table.id)"
+              aria-hidden="true"
+            ></span>
+          </button>
+          <button
+            class="tree-table__name"
+            type="button"
+            draggable="true"
+            [class.tree-table__name--active]="store.selectedTableId() === table.id"
+            [class.tree-table__name--selected]="isSourceTable(table.id)"
+            [class.tree-table__name--dragging]="draggedTableId() === table.id"
+            [attr.aria-label]="'Use datasource table ' + table.label"
+            title="Drag table to the canvas"
+            (click)="useTable(table.id)"
+            (mousedown)="startTablePointerDrag(table.id, table.label, $event)"
+            (dragstart)="startTableDrag(table.id, $event)"
+            (dragend)="finishTableDrag()"
+          >
+            <span class="tree-icon tree-icon--table" aria-hidden="true"></span>
+            <span class="tree-table__text">
+              <strong>{{ table.label }}</strong>
+              <small>{{ table.schema }}.{{ table.name }}</small>
+            </span>
+          </button>
+          <button
+            class="icon-button tree-action"
+            type="button"
+            title="Use table"
+            aria-label="Use table"
+            (click)="useTable(table.id)"
+          >
+            +
+          </button>
+          <div class="tree-table__menu-shell">
+            <button
+              class="icon-button tree-action"
+              type="button"
+              title="Table actions"
+              [attr.aria-label]="'Table actions for ' + table.label"
+              [attr.aria-expanded]="isTableMenuOpen(table.id)"
+              (click)="toggleTableMenu(table.id, $event)"
+            >
+              ...
+            </button>
+
+            @if (isTableMenuOpen(table.id)) {
+              <div class="tree-table-menu" role="menu">
+                <button type="button" role="menuitem" (click)="useTable(table.id)">
+                  Use table
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  (click)="toggleTableExpanded(table.id, $event)"
+                >
+                  {{ isTableExpanded(table.id) ? 'Collapse fields' : 'Expand fields' }}
+                </button>
+                <button type="button" role="menuitem" (click)="addAllFields(table.id)">
+                  Add all fields
+                </button>
+                @if (isSourceTable(table.id)) {
+                  <button
+                    class="tree-table-menu__danger"
+                    type="button"
+                    role="menuitem"
+                    (click)="removeSourceTable(table.id)"
+                  >
+                    Remove source
+                  </button>
+                }
+              </div>
+            }
+          </div>
+        </div>
+
+        @if (isTableExpanded(table.id)) {
+          <div class="tree-fields">
+            @for (field of table.fields; track field.id) {
+              <button class="field-row" type="button" (click)="store.addColumn(field.id)">
+                <span class="tree-icon tree-icon--field" aria-hidden="true"></span>
+                <span class="field-row__label">{{ field.label }}</span>
+                <small>{{ field.type }}</small>
+              </button>
+            }
+          </div>
+        }
+      }
+    </details>
+  }
+</div>
+
+@if (tableDragGhost(); as ghost) {
+  <div class="table-drag-ghost" [style.left.px]="ghost.x" [style.top.px]="ghost.y">
+    <span class="tree-icon tree-icon--table" aria-hidden="true"></span>
+    <span>{{ ghost.label }}</span>
+  </div>
+}

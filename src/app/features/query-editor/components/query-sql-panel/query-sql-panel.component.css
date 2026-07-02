@@ -1,0 +1,55 @@
+:host {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-surface);
+  overflow: hidden;
+}
+
+h2 {
+  margin: 0;
+  color: var(--app-text);
+  font-size: 15px;
+  font-weight: 720;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-surface-subtle);
+}
+
+.panel-heading span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid #c7dfdc;
+  border-radius: 6px;
+  background: var(--app-accent-soft);
+  color: var(--app-accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+pre {
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  margin: 0;
+  padding: 14px;
+  border: 0;
+  background: #16212f;
+  color: #d8e8f7;
+  white-space: pre-wrap;
+}
