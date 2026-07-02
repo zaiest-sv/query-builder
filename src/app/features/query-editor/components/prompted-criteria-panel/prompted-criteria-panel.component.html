@@ -1,0 +1,189 @@
+<section class="criteria-layout">
+  <div class="criteria-builder">
+    <div class="section-heading">
+      <h2>Prompted Criteria · {{ store.activeQueryLabel() }}</h2>
+      <span>{{ store.activeQuery().filters.length }} filters</span>
+    </div>
+
+    <div class="criteria-toolbar">
+      <label>
+        Field
+        <select [value]="activeFilterFieldId()" (change)="setFilterField($event)">
+          @for (field of store.fieldsForSelectedSources(); track field.id) {
+            <option [value]="field.id">{{ field.label }}</option>
+          }
+        </select>
+      </label>
+      <button
+        class="button button--secondary"
+        type="button"
+        [disabled]="!activeFilterFieldId()"
+        (click)="addFilter()"
+      >
+        + Filter
+      </button>
+    </div>
+
+    <div class="filter-list">
+      @if (store.activeQuery().filters.length === 0) {
+        <div class="criteria-empty">
+          <h3>No prompted filters</h3>
+          <p>Add a filter to limit preview rows or expose a prompt parameter.</p>
+        </div>
+      } @else {
+        <div class="filter-list__header">
+          <span>Field</span>
+          <span>Operator</span>
+          <span>Value</span>
+          <span>Prompt</span>
+          <span>Actions</span>
+        </div>
+
+        @for (filter of store.activeQuery().filters; track filter.id) {
+          <div class="filter-row">
+            <div class="filter-field">
+              <strong>{{ fieldLabel(filter.fieldId) }}</strong>
+              @if (fieldForColumn(filter.fieldId); as field) {
+                <small>{{ field.type }}</small>
+              }
+            </div>
+            <select
+              [value]="filter.operator"
+              (change)="updateFilterOperator(filter.id, $event)"
+              aria-label="Filter operator"
+            >
+              @for (operator of filterOperators; track operator) {
+                <option [value]="operator">{{ operator }}</option>
+              }
+            </select>
+            <input
+              [type]="filterValueInputType(filter)"
+              [value]="filter.value"
+              [disabled]="filter.parameterName || filter.operator === 'isEmpty'"
+              (input)="updateFilterValue(filter.id, $event)"
+              aria-label="Filter value"
+              placeholder="Literal value"
+            />
+            <div class="prompt-binding">
+              <select
+                [value]="filter.parameterName"
+                (change)="updateFilterParameter(filter.id, $event)"
+                aria-label="Prompt parameter"
+              >
+                <option value="" [selected]="!filter.parameterName">No prompt</option>
+                @for (parameter of store.activeQuery().parameters; track parameter.id) {
+                  <option
+                    [value]="parameter.name"
+                    [selected]="parameter.name === filter.parameterName"
+                  >
+                    @{{ parameter.name }} · {{ parameter.label }}
+                  </option>
+                }
+              </select>
+              @if (parameterForFilter(filter); as boundParameter) {
+                <small>Preview value: {{ boundParameter.defaultValue || 'empty' }}</small>
+              }
+            </div>
+            <div class="filter-actions">
+              <button
+                class="button button--secondary"
+                type="button"
+                [disabled]="filter.parameterName"
+                (click)="addParameterForFilter(filter.id)"
+              >
+                + Prompt
+              </button>
+              <button
+                class="icon-button icon-button--danger"
+                type="button"
+                title="Remove filter"
+                aria-label="Remove filter"
+                (click)="store.removeFilter(filter.id)"
+              >
+                x
+              </button>
+            </div>
+          </div>
+        }
+      }
+    </div>
+  </div>
+
+  <aside class="parameters-panel">
+    <div class="panel-heading">
+      <h2>Parameters</h2>
+      <button class="button button--secondary" type="button" (click)="addParameter()">
+        + Parameter
+      </button>
+    </div>
+    <div class="parameter-list">
+      @if (store.activeQuery().parameters.length === 0) {
+        <div class="criteria-empty">
+          <h3>No prompt parameters</h3>
+          <p>Create a prompt from a filter or add one manually.</p>
+        </div>
+      } @else {
+        @for (parameter of store.activeQuery().parameters; track parameter.id) {
+          <div class="parameter-row">
+            <label class="parameter-label">
+              Label
+              <input
+                type="text"
+                [value]="parameter.label"
+                (input)="updateParameterLabel(parameter.id, $event)"
+              />
+            </label>
+            <label class="parameter-name">
+              Name
+              <span>
+                @
+                <input
+                  type="text"
+                  [value]="parameter.name"
+                  (input)="updateParameterName(parameter.id, $event)"
+                />
+              </span>
+            </label>
+            <label>
+              Type
+              <select [value]="parameter.type" (change)="updateParameterType(parameter.id, $event)">
+                @for (type of fieldTypes; track type) {
+                  <option [value]="type">{{ type }}</option>
+                }
+              </select>
+            </label>
+            <label>
+              Default
+              <input
+                type="text"
+                [value]="parameter.defaultValue"
+                (input)="updateParameterDefaultValue(parameter.id, $event)"
+              />
+            </label>
+            <label class="toggle-inline">
+              <input
+                type="checkbox"
+                [checked]="parameter.required"
+                (change)="updateParameterRequired(parameter.id, $event)"
+              />
+              Required
+            </label>
+            <button
+              class="icon-button icon-button--danger"
+              type="button"
+              title="Remove parameter"
+              aria-label="Remove parameter"
+              (click)="removeParameter(parameter.id)"
+            >
+              x
+            </button>
+          </div>
+        }
+      }
+    </div>
+    <div class="parameters-footer">
+      <span>{{ store.activeQuery().parameters.length }} prompts</span>
+      <span>{{ store.activeFilteredSourceRows().length }} preview rows after prompts</span>
+    </div>
+  </aside>
+</section>

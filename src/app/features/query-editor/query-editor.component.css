@@ -253,11 +253,19 @@ summary:focus-visible {
 }
 
 .editor-body {
+  --datasource-panel-width: 350px;
   display: grid;
-  grid-template-columns: minmax(292px, 350px) minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: var(--datasource-panel-width) 12px minmax(0, 1fr);
+  gap: 0;
   min-height: 0;
   padding: 14px;
+  column-gap: 0;
+}
+
+.datasource-shell {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
 }
 
 .workspace {
@@ -268,6 +276,72 @@ summary:focus-visible {
   background: var(--app-surface);
   box-shadow: var(--app-shadow-soft);
   overflow: hidden;
+}
+
+.layout-resizer {
+  position: relative;
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  width: 12px;
+  min-width: 12px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-faint);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.layout-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 8px 4px;
+  border-radius: 999px;
+  background: transparent;
+  transition:
+    background 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.layout-resizer span {
+  position: relative;
+  width: 3px;
+  height: 40px;
+  border-radius: 999px;
+  background: #c8d4df;
+  opacity: 0;
+  transition:
+    background 140ms ease,
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.layout-resizer:hover::before,
+.layout-resizer:focus-visible::before,
+.layout-resizer--active::before {
+  background: rgba(18, 107, 115, 0.08);
+  box-shadow: 0 0 0 1px rgba(18, 107, 115, 0.12) inset;
+}
+
+.layout-resizer:hover span,
+.layout-resizer:focus-visible span,
+.layout-resizer--active span {
+  background: var(--app-accent);
+  opacity: 1;
+  transform: scaleY(1.2);
+}
+
+.layout-resizer:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 1px;
+}
+
+.editor-body--resizing-left .workspace,
+.query-layout--resizing-right .canvas-panel,
+.query-layout--resizing-right .query-side-panel {
+  pointer-events: none;
 }
 
 select,
@@ -351,7 +425,9 @@ textarea {
 }
 
 .query-layout {
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 34%);
+  --query-side-panel-width: 430px;
+  grid-template-columns: minmax(0, 1fr) 12px var(--query-side-panel-width);
+  gap: 0;
 }
 
 .query-side-panel {
@@ -360,6 +436,10 @@ textarea {
   gap: 14px;
   min-width: 0;
   min-height: 0;
+}
+
+.layout-resizer--query-side {
+  margin: 0;
 }
 
 .criteria-layout,
@@ -1014,7 +1094,16 @@ textarea {
     grid-template-columns: 1fr;
   }
 
-  app-datasource-panel {
+  .editor-body,
+  .query-layout {
+    gap: 14px;
+  }
+
+  .layout-resizer {
+    display: none;
+  }
+
+  .datasource-shell {
     min-height: 320px;
   }
 }

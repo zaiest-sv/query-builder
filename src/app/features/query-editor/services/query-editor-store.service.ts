@@ -1,9 +1,7 @@
 import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
-  CellValue,
   CrosstabAggregation,
-  CrosstabDefinition,
   DataRecord,
   DataSourceField,
   DataSourceGroup,
@@ -26,6 +24,7 @@ import {
   SortDirection,
 } from '../models/report-definition.model';
 import { CrosstabEngineService } from './crosstab-engine.service';
+import { createSafeSqlAlias, QueryCrosstabConfigService } from './query-crosstab-config.service';
 import { QUERY_EDITOR_API } from './query-editor-api.service';
 import {
   areJoinConditionsEqual,
@@ -34,7 +33,10 @@ import {
   joinTouchesTable,
   QueryJoinGraphService,
 } from './query-join-graph.service';
+import { QueryPreviewService } from './query-preview.service';
 import { QuerySqlBuilderService } from './query-sql-builder.service';
+import { QuerySubqueryDatasourceService } from './query-subquery-datasource.service';
+import { QueryValidationService } from './query-validation.service';
 
 export type { JoinDropAssessment, JoinDropMode } from './query-join-graph.service';
 
@@ -92,10 +94,14 @@ export type QueryWorkspaceId = 'main' | string;
 @Injectable({ providedIn: 'root' })
 export class QueryEditorStore {
   private readonly api = inject(QUERY_EDITOR_API);
+  private readonly crosstabConfig = inject(QueryCrosstabConfigService);
   private readonly crosstabEngine = inject(CrosstabEngineService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly joinGraph = inject(QueryJoinGraphService);
+  private readonly previewService = inject(QueryPreviewService);
   private readonly sqlBuilder = inject(QuerySqlBuilderService);
+  private readonly subqueryDatasource = inject(QuerySubqueryDatasourceService);
+  private readonly validationService = inject(QueryValidationService);
   private readonly metadataSignal = signal<readonly DataSourceGroup[]>([]);
   private readonly sourceRowsSignal = signal<readonly DataRecord[]>([]);
   private readonly reportSignal = signal<ReportDefinition>(createEmptyReport());
@@ -135,7 +141,7 @@ export class QueryEditorStore {
   );
   readonly subqueryTables = computed(() =>
     this.report().subqueries.map((subquery) =>
-      createSubqueryTable(subquery, this.baseFieldLookup()),
+      this.subqueryDatasource.createTable(subquery, this.baseFieldLookup()),
     ),
   );
   readonly metadataWithSubqueries = computed(() => {
@@ -190,7 +196,11 @@ export class QueryEditorStore {
     () => new Set(this.selectedColumns().map((column) => column.fieldId)),
   );
   readonly previewDataRows = computed(() =>
-    createPreviewDataRows(this.sourceRowsSignal(), this.report(), this.baseFieldLookup()),
+    this.previewService.createDataRows(
+      this.sourceRowsSignal(),
+      this.report(),
+      this.baseFieldLookup(),
+    ),
   );
   readonly previewColumns = computed(() =>
     this.report().query.columns.filter((column) => column.visible),
@@ -223,57 +233,68 @@ export class QueryEditorStore {
     filterMetadata(this.metadataWithSubqueries(), this.searchTerm()),
   );
   readonly filteredSourceRows = computed(() =>
-    applyPromptFilters(
+    this.previewService.applyPromptFilters(
       this.previewDataRows(),
       this.report().query.filters,
       this.report().query.parameters,
     ),
   );
   readonly activeFilteredSourceRows = computed(() =>
-    applyPromptFilters(
+    this.previewService.applyPromptFilters(
       this.previewDataRows(),
       this.activeQuery().filters,
       this.activeQuery().parameters,
     ),
   );
   readonly previewSourceRows = computed(() =>
-    sortRows(
-      applyColumnCriteria(this.filteredSourceRows(), this.report().query.columns),
+    this.previewService.sortRows(
+      this.previewService.applyColumnCriteria(
+        this.filteredSourceRows(),
+        this.report().query.columns,
+      ),
       this.report().query.columns,
     ),
   );
   readonly previewRows = computed(() =>
-    projectRows(this.previewSourceRows(), this.previewColumns()),
+    this.previewService.projectRows(this.previewSourceRows(), this.previewColumns()),
   );
   readonly crosstabFields = computed(() =>
-    createCrosstabOutputFields(this.report().query.columns, this.fieldLookup()),
+    this.crosstabConfig.createOutputFields(this.report().query.columns, this.fieldLookup()),
   );
   readonly crosstabFieldLookup = computed(
     () => new Map(this.crosstabFields().map((field) => [field.id, field] as const)),
   );
   readonly crosstabDefinition = computed(() =>
-    normalizeCrosstabDefinition(this.report().crosstab, this.report().query.columns),
+    this.crosstabConfig.normalizeDefinition(this.report().crosstab, this.report().query.columns),
   );
   readonly renderableCrosstabDefinition = computed(() =>
-    createRenderableCrosstabDefinition(this.crosstabDefinition(), this.crosstabFieldLookup()),
+    this.crosstabConfig.createRenderableDefinition(
+      this.crosstabDefinition(),
+      this.crosstabFieldLookup(),
+    ),
   );
   readonly crosstabConfigIssues = computed(() =>
-    createCrosstabConfigIssues(this.crosstabDefinition(), this.crosstabFieldLookup()),
+    this.crosstabConfig.createConfigIssues(this.crosstabDefinition(), this.crosstabFieldLookup()),
   );
   readonly crosstabRows = computed(() =>
-    projectRows(this.previewSourceRows(), this.report().query.columns).map((row) => ({
-      id: row.id,
-      ...row.cells,
-    })),
+    this.previewService
+      .projectRows(this.previewSourceRows(), this.report().query.columns)
+      .map((row) => ({
+        id: row.id,
+        ...row.cells,
+      })),
   );
   readonly activePreviewSourceRows = computed(() =>
-    sortRows(
-      applyColumnCriteria(this.activeFilteredSourceRows(), this.activeQuery().columns),
+    this.previewService.sortRows(
+      this.previewService.applyColumnCriteria(
+        this.activeFilteredSourceRows(),
+        this.activeQuery().columns,
+      ),
       this.activeQuery().columns,
     ),
   );
   readonly activePreviewRows = computed(() =>
-    projectRows(this.activePreviewSourceRows(), this.activePreviewColumns()),
+    this.previewService.projectRows(this.activePreviewSourceRows(), this.activePreviewColumns()),
   );
   readonly sql = computed(() =>
     this.sqlBuilder.build(this.report(), this.tableLookup(), this.fieldLookup()),
@@ -287,10 +308,10 @@ export class QueryEditorStore {
     ),
   );
   readonly validationIssues = computed(() =>
-    validateReport(this.report(), this.tableLookup(), this.fieldLookup()),
+    this.validationService.validateReport(this.report(), this.tableLookup(), this.fieldLookup()),
   );
   readonly activeValidationIssues = computed(() =>
-    validateActiveQuery(
+    this.validationService.validateActiveQuery(
       this.activeQuery(),
       this.activeSubquery(),
       this.report(),
@@ -436,7 +457,7 @@ export class QueryEditorStore {
   }
 
   removeSubquery(subqueryId: string): void {
-    const tableId = createSubqueryTableId(subqueryId);
+    const tableId = this.subqueryDatasource.createTableId(subqueryId);
 
     this.reportSignal.update((report) => ({
       ...report,
@@ -458,7 +479,7 @@ export class QueryEditorStore {
   }
 
   subqueryTableId(subqueryId: string): string {
-    return createSubqueryTableId(subqueryId);
+    return this.subqueryDatasource.createTableId(subqueryId);
   }
 
   canUseTableAsSource(tableId: string): boolean {
@@ -466,7 +487,7 @@ export class QueryEditorStore {
   }
 
   hasSubqueryDependencyCycle(subqueryId: string): boolean {
-    return dependsOnSubquery(this.report(), subqueryId, subqueryId);
+    return this.validationService.dependsOnSubquery(this.report(), subqueryId, subqueryId);
   }
 
   setSearchTerm(value: string): void {
@@ -554,25 +575,25 @@ export class QueryEditorStore {
       }
 
       const crosstabFieldIds = new Set(
-        createCrosstabOutputFields(nextReport.query.columns, this.fieldLookup()).map(
-          (field) => field.id,
-        ),
+        this.crosstabConfig
+          .createOutputFields(nextReport.query.columns, this.fieldLookup())
+          .map((field) => field.id),
       );
 
       return {
         ...nextReport,
         crosstab: {
           ...nextReport.crosstab,
-          rowFieldIds: normalizeCrosstabFieldIds(
-            nextReport.crosstab.rowFieldIds,
-            nextReport.query.columns,
-          ).filter((fieldId) => crosstabFieldIds.has(fieldId)),
-          columnFieldIds: normalizeCrosstabFieldIds(
-            nextReport.crosstab.columnFieldIds,
-            nextReport.query.columns,
-          ).filter((fieldId) => crosstabFieldIds.has(fieldId)),
+          rowFieldIds: this.crosstabConfig
+            .normalizeFieldIds(nextReport.crosstab.rowFieldIds, nextReport.query.columns)
+            .filter((fieldId) => crosstabFieldIds.has(fieldId)),
+          columnFieldIds: this.crosstabConfig
+            .normalizeFieldIds(nextReport.crosstab.columnFieldIds, nextReport.query.columns)
+            .filter((fieldId) => crosstabFieldIds.has(fieldId)),
           values: nextReport.crosstab.values.filter((value) =>
-            crosstabFieldIds.has(normalizeCrosstabFieldId(value.fieldId, nextReport.query.columns)),
+            crosstabFieldIds.has(
+              this.crosstabConfig.normalizeFieldId(value.fieldId, nextReport.query.columns),
+            ),
           ),
         },
       };
@@ -1414,7 +1435,10 @@ export class QueryEditorStore {
   private addCrosstabField(target: 'rowFieldIds' | 'columnFieldIds', fieldId: string): void {
     const field = this.crosstabFieldLookup().get(fieldId);
     const selectedFieldIds = new Set(
-      normalizeCrosstabFieldIds(this.report().crosstab[target], this.report().query.columns),
+      this.crosstabConfig.normalizeFieldIds(
+        this.report().crosstab[target],
+        this.report().query.columns,
+      ),
     );
 
     if (!field || selectedFieldIds.has(fieldId)) {
@@ -1432,7 +1456,7 @@ export class QueryEditorStore {
   }
 
   private removeCrosstabField(target: 'rowFieldIds' | 'columnFieldIds', fieldId: string): void {
-    const equivalentFieldIds = createCrosstabEquivalentFieldIds(
+    const equivalentFieldIds = this.crosstabConfig.createEquivalentFieldIds(
       fieldId,
       this.report().query.columns,
     );
@@ -1455,7 +1479,10 @@ export class QueryEditorStore {
     direction: -1 | 1,
   ): void {
     const fieldIds = [
-      ...normalizeCrosstabFieldIds(this.report().crosstab[target], this.report().query.columns),
+      ...this.crosstabConfig.normalizeFieldIds(
+        this.report().crosstab[target],
+        this.report().query.columns,
+      ),
     ];
     const currentIndex = fieldIds.indexOf(fieldId);
     const nextIndex = currentIndex + direction;
@@ -1500,7 +1527,7 @@ export class QueryEditorStore {
 
   private wouldCreateSubqueryDependencyCycle(tableId: string): boolean {
     const activeQueryId = this.activeQueryId();
-    const candidateSubqueryId = parseSubqueryTableId(tableId);
+    const candidateSubqueryId = this.subqueryDatasource.parseTableId(tableId);
 
     if (activeQueryId === 'main' || !candidateSubqueryId) {
       return false;
@@ -1508,7 +1535,7 @@ export class QueryEditorStore {
 
     return (
       candidateSubqueryId === activeQueryId ||
-      dependsOnSubquery(this.report(), candidateSubqueryId, activeQueryId)
+      this.validationService.dependsOnSubquery(this.report(), candidateSubqueryId, activeQueryId)
     );
   }
 
@@ -1575,128 +1602,6 @@ function filterMetadata(
   }
 
   return filteredGroups;
-}
-
-function createSubqueryTable(
-  subquery: QuerySubquery,
-  baseFieldLookup: ReadonlyMap<string, DataSourceField>,
-): DataSourceTable {
-  const tableId = createSubqueryTableId(subquery.id);
-  const fields = subquery.query.columns
-    .filter((column) => column.visible)
-    .map((column, index) => {
-      const sourceField = baseFieldLookup.get(column.fieldId);
-      const fieldName = createSafeSqlAlias(
-        column.alias || sourceField?.name || `Column${index + 1}`,
-      );
-
-      return {
-        id: `${tableId}.${fieldName}`,
-        tableId,
-        name: fieldName,
-        label: column.alias || sourceField?.label || fieldName,
-        expression: `${subquery.alias}.${fieldName}`,
-        type: sourceField?.type ?? 'string',
-        nullable: sourceField?.nullable ?? true,
-        aggregations: sourceField?.aggregations ?? (['count'] as const),
-      };
-    });
-
-  return {
-    id: tableId,
-    schema: 'subquery',
-    name: subquery.name,
-    alias: subquery.alias,
-    label: subquery.name,
-    sourceType: 'subquery',
-    subqueryId: subquery.id,
-    fields,
-  };
-}
-
-function createSubqueryTableId(subqueryId: string): string {
-  return `subquery:${subqueryId}`;
-}
-
-function parseSubqueryTableId(tableId: string): string | null {
-  return tableId.startsWith('subquery:') ? tableId.slice('subquery:'.length) : null;
-}
-
-function dependsOnSubquery(
-  report: ReportDefinition,
-  sourceSubqueryId: string,
-  targetSubqueryId: string,
-  visitedSubqueryIds: ReadonlySet<string> = new Set(),
-): boolean {
-  if (visitedSubqueryIds.has(sourceSubqueryId)) {
-    return false;
-  }
-
-  const sourceSubquery = report.subqueries.find((subquery) => subquery.id === sourceSubqueryId);
-
-  if (!sourceSubquery) {
-    return false;
-  }
-
-  const nextVisitedSubqueryIds = new Set(visitedSubqueryIds);
-  nextVisitedSubqueryIds.add(sourceSubqueryId);
-
-  return sourceSubquery.query.sourceTableIds.some((tableId) => {
-    const dependencySubqueryId = parseSubqueryTableId(tableId);
-
-    if (!dependencySubqueryId) {
-      return false;
-    }
-
-    return (
-      dependencySubqueryId === targetSubqueryId ||
-      dependsOnSubquery(report, dependencySubqueryId, targetSubqueryId, nextVisitedSubqueryIds)
-    );
-  });
-}
-
-function createPreviewDataRows(
-  rows: readonly DataRecord[],
-  report: ReportDefinition,
-  baseFieldLookup: ReadonlyMap<string, DataSourceField>,
-): readonly DataRecord[] {
-  const previewRows = rows.map((row) => ({ ...row }));
-
-  for (const subquery of report.subqueries) {
-    const tableId = createSubqueryTableId(subquery.id);
-
-    subquery.query.columns
-      .filter((column) => column.visible)
-      .forEach((column, index) => {
-        const sourceField = baseFieldLookup.get(column.fieldId);
-        const fieldName = createSafeSqlAlias(
-          column.alias || sourceField?.name || `Column${index + 1}`,
-        );
-        const subqueryFieldId = `${tableId}.${fieldName}`;
-
-        previewRows.forEach((row) => {
-          row[subqueryFieldId] = row[column.fieldId] ?? null;
-        });
-      });
-  }
-
-  return previewRows;
-}
-
-function createSafeSqlAlias(value: string): string {
-  const normalized = value
-    .trim()
-    .replace(/[^A-Za-z0-9_]/g, '_')
-    .replace(/_+/g, '_');
-  const withoutEdgeUnderscores = normalized.replace(/^_+|_+$/g, '');
-
-  if (!withoutEdgeUnderscores) {
-    return '';
-  }
-
-  return /^[A-Za-z]/.test(withoutEdgeUnderscores)
-    ? withoutEdgeUnderscores
-    : `Alias_${withoutEdgeUnderscores}`;
 }
 
 function updateReportQuery(
@@ -1790,321 +1695,6 @@ function defaultParameterValue(type: FieldType): string {
     case 'string':
       return '';
   }
-}
-
-function applyPromptFilters(
-  rows: readonly DataRecord[],
-  filters: readonly QueryFilter[],
-  parameters: readonly QueryParameter[],
-): readonly DataRecord[] {
-  const parameterLookup = new Map(parameters.map((parameter) => [parameter.name, parameter]));
-
-  return rows.filter((row) =>
-    filters.every((filter) => {
-      const value = row[filter.fieldId];
-      const filterValue =
-        filter.operator === 'isEmpty'
-          ? ''
-          : (parameterLookup.get(filter.parameterName)?.defaultValue ?? filter.value);
-
-      switch (filter.operator) {
-        case 'equals':
-          return String(value ?? '').toLowerCase() === filterValue.toLowerCase();
-        case 'notEquals':
-          return String(value ?? '').toLowerCase() !== filterValue.toLowerCase();
-        case 'contains':
-          return String(value ?? '')
-            .toLowerCase()
-            .includes(filterValue.toLowerCase());
-        case 'greaterThan':
-          return Number(value) > Number(filterValue);
-        case 'lessThan':
-          return Number(value) < Number(filterValue);
-        case 'isEmpty':
-          return value === null || value === '';
-      }
-    }),
-  );
-}
-
-function applyColumnCriteria(
-  rows: readonly DataRecord[],
-  columns: readonly QueryColumn[],
-): readonly DataRecord[] {
-  const criteriaColumns = columns.filter((column) =>
-    [column.criteria, ...(column.orCriteria ?? [])].some((criteria) => criteria?.trim()),
-  );
-
-  if (criteriaColumns.length === 0) {
-    return rows;
-  }
-
-  return rows.filter((row) =>
-    criteriaColumns.every((column) => {
-      const criteriaValues = [column.criteria, ...(column.orCriteria ?? [])].filter(
-        (criteria): criteria is string => Boolean(criteria?.trim()),
-      );
-
-      return criteriaValues.some((criteria) =>
-        matchesColumnCriteria(row[column.fieldId], criteria),
-      );
-    }),
-  );
-}
-
-function sortRows(
-  rows: readonly DataRecord[],
-  columns: readonly QueryColumn[],
-): readonly DataRecord[] {
-  const sortColumns = columns.filter((column) => column.sortDirection !== 'none');
-
-  if (sortColumns.length === 0) {
-    return rows;
-  }
-
-  return [...rows].sort((firstRow, secondRow) => {
-    for (const column of sortColumns) {
-      const comparison = compareCellValues(
-        firstRow[column.fieldId] ?? null,
-        secondRow[column.fieldId] ?? null,
-      );
-
-      if (comparison !== 0) {
-        return column.sortDirection === 'asc' ? comparison : -comparison;
-      }
-    }
-
-    return 0;
-  });
-}
-
-function matchesColumnCriteria(value: CellValue, criteria: string): boolean {
-  const trimmedCriteria = criteria.trim();
-
-  if (!trimmedCriteria) {
-    return true;
-  }
-
-  const operatorMatch = /^(>=|<=|<>|!=|=|>|<)\s*(.+)$/.exec(trimmedCriteria);
-
-  if (operatorMatch) {
-    const operator = operatorMatch[1] === '!=' ? '<>' : operatorMatch[1];
-    const criteriaValue = operatorMatch[2] ?? '';
-    const comparison = compareCellValues(value, criteriaValue);
-
-    switch (operator) {
-      case '=':
-        return comparison === 0;
-      case '<>':
-        return comparison !== 0;
-      case '>':
-        return comparison > 0;
-      case '>=':
-        return comparison >= 0;
-      case '<':
-        return comparison < 0;
-      case '<=':
-        return comparison <= 0;
-      default:
-        return false;
-    }
-  }
-
-  if (trimmedCriteria.includes('%')) {
-    return createWildcardMatcher(trimmedCriteria).test(String(value ?? ''));
-  }
-
-  return compareCellValues(value, trimmedCriteria) === 0;
-}
-
-function compareCellValues(firstValue: CellValue, secondValue: CellValue): number {
-  if (firstValue === secondValue) {
-    return 0;
-  }
-
-  if (firstValue === null || firstValue === '') {
-    return -1;
-  }
-
-  if (secondValue === null || secondValue === '') {
-    return 1;
-  }
-
-  const firstNumber = Number(firstValue);
-  const secondNumber = Number(secondValue);
-
-  if (Number.isFinite(firstNumber) && Number.isFinite(secondNumber)) {
-    return firstNumber - secondNumber;
-  }
-
-  const firstTime = typeof firstValue === 'string' ? Date.parse(firstValue) : Number.NaN;
-  const secondTime = typeof secondValue === 'string' ? Date.parse(secondValue) : Number.NaN;
-
-  if (Number.isFinite(firstTime) && Number.isFinite(secondTime)) {
-    return firstTime - secondTime;
-  }
-
-  return String(firstValue).localeCompare(String(secondValue), undefined, {
-    numeric: true,
-    sensitivity: 'base',
-  });
-}
-
-function createWildcardMatcher(pattern: string): RegExp {
-  const escapedPattern = pattern
-    .split('%')
-    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('.*');
-
-  return new RegExp(`^${escapedPattern}$`, 'i');
-}
-
-function projectRows(
-  rows: readonly DataRecord[],
-  columns: readonly QueryColumn[],
-): readonly PreviewRow[] {
-  return rows.map((row) => ({
-    id: row.id,
-    cells: Object.fromEntries(columns.map((column) => [column.id, row[column.fieldId] ?? null])),
-  }));
-}
-
-function createCrosstabOutputFields(
-  columns: readonly QueryColumn[],
-  fieldLookup: ReadonlyMap<string, DataSourceField>,
-): readonly DataSourceField[] {
-  return columns.map((column) => {
-    const sourceField = fieldLookup.get(column.fieldId);
-    const name = createSafeSqlAlias(column.alias || sourceField?.name || column.id);
-
-    return {
-      id: column.id,
-      tableId: 'query-output',
-      name: name || column.id,
-      label: column.alias || sourceField?.label || column.id,
-      expression: column.expression,
-      type: sourceField?.type ?? 'string',
-      nullable: sourceField?.nullable ?? true,
-      aggregations: sourceField?.aggregations ?? (['count'] as const),
-    };
-  });
-}
-
-function normalizeCrosstabDefinition(
-  definition: CrosstabDefinition,
-  columns: readonly QueryColumn[],
-): CrosstabDefinition {
-  return {
-    ...definition,
-    rowFieldIds: normalizeCrosstabFieldIds(definition.rowFieldIds, columns),
-    columnFieldIds: normalizeCrosstabFieldIds(definition.columnFieldIds, columns),
-    values: definition.values.map((value) => ({
-      ...value,
-      fieldId: normalizeCrosstabFieldId(value.fieldId, columns),
-    })),
-  };
-}
-
-function normalizeCrosstabFieldIds(
-  fieldIds: readonly string[],
-  columns: readonly QueryColumn[],
-): readonly string[] {
-  return fieldIds.map((fieldId) => normalizeCrosstabFieldId(fieldId, columns));
-}
-
-function normalizeCrosstabFieldId(fieldId: string, columns: readonly QueryColumn[]): string {
-  return columns.find((column) => column.fieldId === fieldId)?.id ?? fieldId;
-}
-
-function createCrosstabEquivalentFieldIds(
-  fieldId: string,
-  columns: readonly QueryColumn[],
-): ReadonlySet<string> {
-  const fieldIds = new Set<string>([fieldId]);
-  const column = columns.find(
-    (currentColumn) => currentColumn.id === fieldId || currentColumn.fieldId === fieldId,
-  );
-
-  if (column) {
-    fieldIds.add(column.id);
-    fieldIds.add(column.fieldId);
-  }
-
-  return fieldIds;
-}
-
-function createRenderableCrosstabDefinition(
-  definition: CrosstabDefinition,
-  fieldLookup: ReadonlyMap<string, DataSourceField>,
-): CrosstabDefinition {
-  const valueKeys = new Set<string>();
-
-  return {
-    ...definition,
-    rowFieldIds: definition.rowFieldIds.filter((fieldId) => fieldLookup.has(fieldId)),
-    columnFieldIds: definition.columnFieldIds.filter((fieldId) => fieldLookup.has(fieldId)),
-    values: definition.values.filter((value) => {
-      const field = fieldLookup.get(value.fieldId);
-      const valueKey = `${value.fieldId}:${value.aggregation}`;
-
-      if (!field || !field.aggregations.includes(value.aggregation) || valueKeys.has(valueKey)) {
-        return false;
-      }
-
-      valueKeys.add(valueKey);
-
-      return true;
-    }),
-  };
-}
-
-function createCrosstabConfigIssues(
-  definition: CrosstabDefinition,
-  fieldLookup: ReadonlyMap<string, DataSourceField>,
-): readonly string[] {
-  const issues: string[] = [];
-  const valueKeys = new Set<string>();
-
-  if (fieldLookup.size === 0) {
-    issues.push('Add at least one visible Main query column.');
-  }
-
-  if (definition.rowFieldIds.length === 0) {
-    issues.push('Add at least one row field.');
-  }
-
-  if (definition.columnFieldIds.length === 0) {
-    issues.push('Add at least one column field.');
-  }
-
-  if (definition.values.length === 0) {
-    issues.push('Add at least one value.');
-  }
-
-  for (const fieldId of [...definition.rowFieldIds, ...definition.columnFieldIds]) {
-    if (!fieldLookup.has(fieldId)) {
-      issues.push(`${fieldId} is not available in Main query output.`);
-    }
-  }
-
-  for (const value of definition.values) {
-    const field = fieldLookup.get(value.fieldId);
-    const valueKey = `${value.fieldId}:${value.aggregation}`;
-
-    if (!field) {
-      issues.push(`${value.label} is not available in Main query output.`);
-    } else if (!field.aggregations.includes(value.aggregation)) {
-      issues.push(`${value.aggregation.toUpperCase()} is not supported for ${field.label}.`);
-    }
-
-    if (valueKeys.has(valueKey)) {
-      issues.push(`${value.aggregation.toUpperCase()} ${value.label} is duplicated.`);
-    } else {
-      valueKeys.add(valueKey);
-    }
-  }
-
-  return issues;
 }
 
 function createCanvasJoin(
@@ -2278,371 +1868,6 @@ function selectionTouchesTable(
   }
 
   return false;
-}
-
-function validateActiveQuery(
-  query: QueryDocument,
-  subquery: QuerySubquery | null,
-  report: ReportDefinition,
-  tableLookup: ReadonlyMap<string, DataSourceTable>,
-  fieldLookup: ReadonlyMap<string, DataSourceField>,
-): readonly string[] {
-  const issues = [
-    ...validateQueryDocument(query, subquery?.name ?? 'Main query', tableLookup, fieldLookup, {
-      selfSourceTableId: subquery ? createSubqueryTableId(subquery.id) : '',
-      requireVisibleOutputColumn: subquery !== null,
-    }),
-  ];
-
-  if (subquery && dependsOnSubquery(report, subquery.id, subquery.id)) {
-    issues.push(`${subquery.name}: circular subquery datasource dependency.`);
-  }
-
-  return issues;
-}
-
-function validateQueryDocument(
-  query: QueryDocument,
-  label: string,
-  tableLookup: ReadonlyMap<string, DataSourceTable>,
-  fieldLookup: ReadonlyMap<string, DataSourceField>,
-  options: {
-    readonly selfSourceTableId?: string;
-    readonly requireVisibleOutputColumn?: boolean;
-  } = {},
-): readonly string[] {
-  const issues: string[] = [];
-  const aliases = new Set<string>();
-  const parameterNames = new Set<string>();
-
-  if (query.sourceTableIds.length === 0) {
-    issues.push(`${label}: select at least one datasource table.`);
-  }
-
-  if (query.columns.length === 0) {
-    issues.push(`${label}: add at least one query column.`);
-  }
-
-  if (options.requireVisibleOutputColumn && !query.columns.some((column) => column.visible)) {
-    issues.push(`${label}: select at least one visible output column.`);
-  }
-
-  for (const tableId of query.sourceTableIds) {
-    if (options.selfSourceTableId && tableId === options.selfSourceTableId) {
-      issues.push(`${label}: cannot use itself as a datasource.`);
-    } else if (!tableLookup.has(tableId)) {
-      issues.push(`${label}: datasource ${tableId} is no longer available.`);
-    }
-  }
-
-  for (const column of query.columns) {
-    const field = fieldLookup.get(column.fieldId);
-
-    if (!field) {
-      issues.push(`${label}: column ${column.alias} points to a missing field.`);
-    } else if (!query.sourceTableIds.includes(field.tableId)) {
-      issues.push(`${label}: column ${column.alias} uses an unselected datasource.`);
-    }
-
-    const normalizedAlias = column.alias.trim().toLowerCase();
-
-    if (!normalizedAlias) {
-      issues.push(`${label}: column aliases cannot be empty.`);
-    } else if (aliases.has(normalizedAlias)) {
-      issues.push(`${label}: column alias ${column.alias} is duplicated.`);
-    } else {
-      aliases.add(normalizedAlias);
-    }
-  }
-
-  for (const filter of query.filters) {
-    const field = fieldLookup.get(filter.fieldId);
-
-    if (!field) {
-      issues.push(`${label}: filter ${filter.id} points to a missing field.`);
-    } else if (!query.sourceTableIds.includes(field.tableId)) {
-      issues.push(`${label}: filter on ${field.label} uses an unselected datasource.`);
-    }
-
-    if (filter.parameterName && !/^[A-Za-z][A-Za-z0-9_]*$/.test(filter.parameterName)) {
-      issues.push(
-        `${label}: parameter ${filter.parameterName} must start with a letter and use letters, numbers, or underscores.`,
-      );
-    } else if (
-      filter.parameterName &&
-      !query.parameters.some((parameter) => parameter.name === filter.parameterName)
-    ) {
-      issues.push(
-        `${label}: filter on ${field?.label ?? filter.id} uses a missing prompt parameter.`,
-      );
-    }
-  }
-
-  for (const parameter of query.parameters) {
-    const normalizedName = parameter.name.trim();
-
-    if (!normalizedName) {
-      issues.push(`${label}: prompt parameter names cannot be empty.`);
-    } else if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(normalizedName)) {
-      issues.push(
-        `${label}: parameter ${parameter.name} must start with a letter and use letters, numbers, or underscores.`,
-      );
-    } else if (parameterNames.has(normalizedName.toLowerCase())) {
-      issues.push(`${label}: parameter ${parameter.name} is duplicated.`);
-    } else {
-      parameterNames.add(normalizedName.toLowerCase());
-    }
-
-    if (!parameter.label.trim()) {
-      issues.push(`${label}: parameter ${parameter.name || parameter.id} label cannot be empty.`);
-    }
-  }
-
-  for (const join of query.joins) {
-    if (join.conditions.length === 0) {
-      issues.push(`${label}: join ${join.id} must have at least one condition.`);
-      continue;
-    }
-
-    for (const condition of join.conditions) {
-      const fromField = fieldLookup.get(condition.fromFieldId);
-      const toField = fieldLookup.get(condition.toFieldId);
-
-      if (!fromField || !toField) {
-        issues.push(`${label}: join ${join.id} points to a missing field.`);
-        continue;
-      }
-
-      if (fromField.tableId === toField.tableId) {
-        issues.push(`${label}: join ${join.id} connects fields from the same datasource.`);
-      }
-
-      if (
-        !query.sourceTableIds.includes(fromField.tableId) ||
-        !query.sourceTableIds.includes(toField.tableId)
-      ) {
-        issues.push(`${label}: join ${join.id} uses an unselected datasource.`);
-      }
-    }
-  }
-
-  return issues;
-}
-
-function validateReport(
-  report: ReportDefinition,
-  tableLookup: ReadonlyMap<string, DataSourceTable>,
-  fieldLookup: ReadonlyMap<string, DataSourceField>,
-): readonly string[] {
-  const issues: string[] = [];
-
-  if (report.query.sourceTableIds.length === 0) {
-    issues.push('Select at least one datasource table.');
-  }
-
-  if (report.query.columns.length === 0) {
-    issues.push('Add at least one query column.');
-  }
-
-  for (const tableId of report.query.sourceTableIds) {
-    if (!tableLookup.has(tableId)) {
-      issues.push(`Datasource ${tableId} is no longer available.`);
-    }
-  }
-
-  const aliases = new Set<string>();
-  const parameterNames = new Set<string>();
-
-  for (const column of report.query.columns) {
-    const field = fieldLookup.get(column.fieldId);
-
-    if (!field) {
-      issues.push(`Column ${column.alias} points to a missing field.`);
-    } else if (!report.query.sourceTableIds.includes(field.tableId)) {
-      issues.push(`Column ${column.alias} uses a field from an unselected datasource.`);
-    }
-
-    const normalizedAlias = column.alias.trim().toLowerCase();
-
-    if (!normalizedAlias) {
-      issues.push('Column aliases cannot be empty.');
-    } else if (aliases.has(normalizedAlias)) {
-      issues.push(`Column alias ${column.alias} is duplicated.`);
-    } else {
-      aliases.add(normalizedAlias);
-    }
-  }
-
-  for (const filter of report.query.filters) {
-    const field = fieldLookup.get(filter.fieldId);
-
-    if (!field) {
-      issues.push(`Filter ${filter.id} points to a missing field.`);
-    } else if (!report.query.sourceTableIds.includes(field.tableId)) {
-      issues.push(`Filter on ${field.label} uses an unselected datasource.`);
-    }
-
-    if (filter.parameterName && !/^[A-Za-z][A-Za-z0-9_]*$/.test(filter.parameterName)) {
-      issues.push(
-        `Parameter ${filter.parameterName} must start with a letter and use letters, numbers, or underscores.`,
-      );
-    } else if (
-      filter.parameterName &&
-      !report.query.parameters.some((parameter) => parameter.name === filter.parameterName)
-    ) {
-      issues.push(`Filter on ${field?.label ?? filter.id} uses a missing prompt parameter.`);
-    }
-  }
-
-  for (const parameter of report.query.parameters) {
-    const normalizedName = parameter.name.trim();
-
-    if (!normalizedName) {
-      issues.push('Prompt parameter names cannot be empty.');
-    } else if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(normalizedName)) {
-      issues.push(
-        `Parameter ${parameter.name} must start with a letter and use letters, numbers, or underscores.`,
-      );
-    } else if (parameterNames.has(normalizedName.toLowerCase())) {
-      issues.push(`Parameter ${parameter.name} is duplicated.`);
-    } else {
-      parameterNames.add(normalizedName.toLowerCase());
-    }
-
-    if (!parameter.label.trim()) {
-      issues.push(`Parameter ${parameter.name || parameter.id} label cannot be empty.`);
-    }
-  }
-
-  for (const join of report.query.joins) {
-    if (join.conditions.length === 0) {
-      issues.push(`Join ${join.id} must have at least one condition.`);
-      continue;
-    }
-
-    for (const condition of join.conditions) {
-      const fromField = fieldLookup.get(condition.fromFieldId);
-      const toField = fieldLookup.get(condition.toFieldId);
-
-      if (!fromField || !toField) {
-        issues.push(`Join ${join.id} points to a missing field.`);
-        continue;
-      }
-
-      if (fromField.tableId === toField.tableId) {
-        issues.push(`Join ${join.id} connects fields from the same datasource.`);
-      }
-
-      if (
-        !report.query.sourceTableIds.includes(fromField.tableId) ||
-        !report.query.sourceTableIds.includes(toField.tableId)
-      ) {
-        issues.push(`Join ${join.id} uses an unselected datasource.`);
-      }
-    }
-  }
-
-  const crosstabDefinition = normalizeCrosstabDefinition(report.crosstab, report.query.columns);
-  const crosstabFieldLookup = new Map(
-    createCrosstabOutputFields(report.query.columns, fieldLookup).map(
-      (field) => [field.id, field] as const,
-    ),
-  );
-
-  for (const fieldId of crosstabDefinition.rowFieldIds) {
-    if (!crosstabFieldLookup.has(fieldId)) {
-      issues.push(`Crosstab row field ${fieldId} is not a Main query column.`);
-    }
-  }
-
-  for (const fieldId of crosstabDefinition.columnFieldIds) {
-    if (!crosstabFieldLookup.has(fieldId)) {
-      issues.push(`Crosstab column field ${fieldId} is not a Main query column.`);
-    }
-  }
-
-  for (const value of crosstabDefinition.values) {
-    const field = crosstabFieldLookup.get(value.fieldId);
-
-    if (!field) {
-      issues.push(`Crosstab value ${value.label} is not a Main query column.`);
-    } else if (!field.aggregations.includes(value.aggregation)) {
-      issues.push(`${value.aggregation.toUpperCase()} is not supported for ${field.label}.`);
-    }
-  }
-
-  const subqueryAliases = new Set<string>();
-
-  for (const subquery of report.subqueries) {
-    const alias = subquery.alias.trim().toLowerCase();
-
-    if (!subquery.name.trim()) {
-      issues.push(`Subquery ${subquery.id} name cannot be empty.`);
-    }
-
-    if (!alias) {
-      issues.push(`Subquery ${subquery.name} alias cannot be empty.`);
-    } else if (subqueryAliases.has(alias)) {
-      issues.push(`Subquery alias ${subquery.alias} is duplicated.`);
-    } else {
-      subqueryAliases.add(alias);
-    }
-
-    if (subquery.query.sourceTableIds.length === 0) {
-      issues.push(`Subquery ${subquery.name} must select at least one datasource table.`);
-    }
-
-    if (dependsOnSubquery(report, subquery.id, subquery.id)) {
-      issues.push(`Subquery ${subquery.name} has a circular datasource dependency.`);
-    }
-
-    if (!subquery.query.columns.some((column) => column.visible)) {
-      issues.push(`Subquery ${subquery.name} must expose at least one visible output column.`);
-    }
-
-    for (const tableId of subquery.query.sourceTableIds) {
-      if (tableId === createSubqueryTableId(subquery.id)) {
-        issues.push(`Subquery ${subquery.name} cannot use itself as a datasource.`);
-      } else if (!tableLookup.has(tableId)) {
-        issues.push(`Subquery ${subquery.name} uses a missing datasource ${tableId}.`);
-      }
-    }
-
-    for (const column of subquery.query.columns) {
-      const field = fieldLookup.get(column.fieldId);
-
-      if (!field) {
-        issues.push(`Subquery ${subquery.name} column ${column.alias} points to a missing field.`);
-      } else if (!subquery.query.sourceTableIds.includes(field.tableId)) {
-        issues.push(
-          `Subquery ${subquery.name} column ${column.alias} uses an unselected datasource.`,
-        );
-      }
-    }
-
-    for (const join of subquery.query.joins) {
-      if (join.conditions.length === 0) {
-        issues.push(`Subquery ${subquery.name} join ${join.id} must have at least one condition.`);
-        continue;
-      }
-
-      for (const condition of join.conditions) {
-        const fromField = fieldLookup.get(condition.fromFieldId);
-        const toField = fieldLookup.get(condition.toFieldId);
-
-        if (!fromField || !toField) {
-          issues.push(`Subquery ${subquery.name} join ${join.id} points to a missing field.`);
-          continue;
-        }
-
-        if (fromField.tableId === toField.tableId) {
-          issues.push(`Subquery ${subquery.name} join ${join.id} connects the same datasource.`);
-        }
-      }
-    }
-  }
-
-  return issues;
 }
 
 function createEmptyReport(): ReportDefinition {

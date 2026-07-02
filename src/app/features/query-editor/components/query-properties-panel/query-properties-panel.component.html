@@ -40,6 +40,8 @@
               <strong>{{ table.name }}</strong>
               <span>Alias</span>
               <strong>{{ table.alias }}</strong>
+              <span>Source</span>
+              <strong>{{ table.sourceType ?? 'table' }}</strong>
               <span>Fields</span>
               <strong>{{ table.fields.length }}</strong>
               <span>Selected</span>
@@ -74,6 +76,33 @@
               <button type="button" class="secondary-button" (click)="clearTableFields(table.id)">
                 Clear table fields
               </button>
+            </div>
+          </section>
+
+          <section class="property-section">
+            <div class="section-title">
+              <h3>Selected fields</h3>
+              <span>{{ columnsForTable(table.id).length }}</span>
+            </div>
+            <div class="column-list">
+              @for (column of columnsForTable(table.id); track column.id) {
+                <div class="column-row">
+                  <span>
+                    <strong>{{ column.alias }}</strong>
+                    <small>{{ fieldLabelForColumn(column) }}</small>
+                  </span>
+                  <button
+                    type="button"
+                    title="Remove column"
+                    aria-label="Remove column"
+                    (click)="store.removeColumn(column.id)"
+                  >
+                    x
+                  </button>
+                </div>
+              } @empty {
+                <p class="muted">No fields from this source are selected.</p>
+              }
             </div>
           </section>
 

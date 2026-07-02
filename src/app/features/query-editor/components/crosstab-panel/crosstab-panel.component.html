@@ -1,0 +1,348 @@
+<section class="crosstab-layout">
+  <aside class="crosstab-config">
+    @if (store.crosstabConfigIssues().length > 0) {
+      <div class="crosstab-state crosstab-state--warning">
+        <strong>Needs setup</strong>
+        <ul>
+          @for (issue of store.crosstabConfigIssues(); track issue) {
+            <li>{{ issue }}</li>
+          }
+        </ul>
+      </div>
+    } @else {
+      <div class="crosstab-state crosstab-state--ready">
+        <strong>Ready</strong>
+        <span>{{ store.crosstabMatrix().rows.length }} rows</span>
+      </div>
+    }
+
+    <div class="config-block">
+      <h2>Rows</h2>
+      <div class="add-row">
+        <select [value]="activeCrosstabRowFieldId()" (change)="setCrosstabRowField($event)">
+          @for (field of store.crosstabFields(); track field.id) {
+            <option [value]="field.id" [selected]="field.id === activeCrosstabRowFieldId()">
+              {{ field.label }}
+            </option>
+          }
+        </select>
+        <button
+          class="button button--secondary"
+          type="button"
+          [disabled]="!activeCrosstabRowFieldId()"
+          (click)="addCrosstabRow()"
+        >
+          Add
+        </button>
+      </div>
+      <div class="chip-list">
+        @for (
+          fieldId of store.crosstabDefinition().rowFieldIds;
+          track fieldId;
+          let index = $index
+        ) {
+          <span class="source-chip crosstab-chip">
+            <span class="crosstab-chip__label">
+              {{ crosstabFieldLabel(fieldId) }}
+              <small>{{ crosstabFieldType(fieldId) }}</small>
+            </span>
+            <span class="crosstab-chip__actions">
+              <button
+                type="button"
+                title="Move row field up"
+                aria-label="Move row field up"
+                [disabled]="index === 0"
+                (click)="moveCrosstabRow(fieldId, -1)"
+              >
+                ^
+              </button>
+              <button
+                type="button"
+                title="Move row field down"
+                aria-label="Move row field down"
+                [disabled]="index === store.crosstabDefinition().rowFieldIds.length - 1"
+                (click)="moveCrosstabRow(fieldId, 1)"
+              >
+                v
+              </button>
+              <button
+                type="button"
+                title="Remove row field"
+                aria-label="Remove row field"
+                (click)="store.removeCrosstabRow(fieldId)"
+              >
+                x
+              </button>
+            </span>
+          </span>
+        }
+      </div>
+    </div>
+
+    <div class="config-block">
+      <h2>Columns</h2>
+      <div class="add-row">
+        <select [value]="activeCrosstabColumnFieldId()" (change)="setCrosstabColumnField($event)">
+          @for (field of store.crosstabFields(); track field.id) {
+            <option [value]="field.id" [selected]="field.id === activeCrosstabColumnFieldId()">
+              {{ field.label }}
+            </option>
+          }
+        </select>
+        <button
+          class="button button--secondary"
+          type="button"
+          [disabled]="!activeCrosstabColumnFieldId()"
+          (click)="addCrosstabColumn()"
+        >
+          Add
+        </button>
+      </div>
+      <div class="chip-list">
+        @for (
+          fieldId of store.crosstabDefinition().columnFieldIds;
+          track fieldId;
+          let index = $index
+        ) {
+          <span class="source-chip crosstab-chip">
+            <span class="crosstab-chip__label">
+              {{ crosstabFieldLabel(fieldId) }}
+              <small>{{ crosstabFieldType(fieldId) }}</small>
+            </span>
+            <span class="crosstab-chip__actions">
+              <button
+                type="button"
+                title="Move column field up"
+                aria-label="Move column field up"
+                [disabled]="index === 0"
+                (click)="moveCrosstabColumn(fieldId, -1)"
+              >
+                ^
+              </button>
+              <button
+                type="button"
+                title="Move column field down"
+                aria-label="Move column field down"
+                [disabled]="index === store.crosstabDefinition().columnFieldIds.length - 1"
+                (click)="moveCrosstabColumn(fieldId, 1)"
+              >
+                v
+              </button>
+              <button
+                type="button"
+                title="Remove column field"
+                aria-label="Remove column field"
+                (click)="store.removeCrosstabColumn(fieldId)"
+              >
+                x
+              </button>
+            </span>
+          </span>
+        }
+      </div>
+    </div>
+
+    <div class="config-block">
+      <h2>Values</h2>
+      <div class="value-picker">
+        <select [value]="activeCrosstabValueFieldId()" (change)="setCrosstabValueField($event)">
+          @for (field of store.crosstabFields(); track field.id) {
+            <option [value]="field.id" [selected]="field.id === activeCrosstabValueFieldId()">
+              {{ field.label }}
+            </option>
+          }
+        </select>
+        <select [value]="crosstabAggregation()" (change)="setCrosstabAggregation($event)">
+          @for (aggregation of aggregations; track aggregation) {
+            <option
+              [value]="aggregation"
+              [disabled]="!canUseAggregation(activeCrosstabValueFieldId(), aggregation)"
+            >
+              {{ aggregation }}
+            </option>
+          }
+        </select>
+        <button
+          class="button button--secondary"
+          type="button"
+          [disabled]="
+            !activeCrosstabValueFieldId() ||
+            !canAddCrosstabValue(activeCrosstabValueFieldId(), crosstabAggregation())
+          "
+          (click)="addCrosstabValue()"
+        >
+          Add
+        </button>
+      </div>
+      <div class="chip-list">
+        @for (value of store.crosstabDefinition().values; track value.id; let index = $index) {
+          <span class="source-chip crosstab-chip">
+            <span class="crosstab-chip__label">
+              {{ value.aggregation }} {{ value.label }}
+              <small>{{ crosstabFieldType(value.fieldId) }}</small>
+            </span>
+            <span class="crosstab-chip__actions">
+              <button
+                type="button"
+                title="Move value up"
+                aria-label="Move value up"
+                [disabled]="index === 0"
+                (click)="moveCrosstabValue(value.id, -1)"
+              >
+                ^
+              </button>
+              <button
+                type="button"
+                title="Move value down"
+                aria-label="Move value down"
+                [disabled]="index === store.crosstabDefinition().values.length - 1"
+                (click)="moveCrosstabValue(value.id, 1)"
+              >
+                v
+              </button>
+              <button
+                type="button"
+                title="Remove value"
+                aria-label="Remove value"
+                (click)="store.removeCrosstabValue(value.id)"
+              >
+                x
+              </button>
+            </span>
+          </span>
+        }
+      </div>
+    </div>
+
+    <div class="toggle-list">
+      <label>
+        <input
+          type="checkbox"
+          [checked]="store.report().crosstab.includeRowTotals"
+          (change)="setIncludeRowTotals($event)"
+        />
+        Row totals
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          [checked]="store.report().crosstab.includeColumnTotals"
+          (change)="setIncludeColumnTotals($event)"
+        />
+        Column totals
+      </label>
+    </div>
+  </aside>
+
+  <div class="crosstab-table-wrap">
+    @if (!canRenderCrosstab()) {
+      <div class="preview-empty crosstab-empty">
+        <h3>Crosstab is not ready</h3>
+        <p>Rows, columns, and values are required.</p>
+      </div>
+    } @else if (store.crosstabMatrix().rows.length === 0) {
+      <div class="preview-empty crosstab-empty">
+        <h3>No crosstab rows</h3>
+        <p>Current Main query preview has no matching rows.</p>
+      </div>
+    } @else {
+      <div class="crosstab-preview-summary">
+        <span>{{ store.crosstabMatrix().rows.length }} rows</span>
+        <span>{{ store.crosstabMatrix().columnGroups.length }} column groups</span>
+        <span>{{ store.crosstabMatrix().valueDefinitions.length }} values</span>
+        <span>{{ crosstabCellCount() }} cells</span>
+        <button class="button button--secondary" type="button" (click)="exportCrosstabCsv()">
+          Export CSV
+        </button>
+      </div>
+
+      <div class="crosstab-scroll">
+        <table class="data-table crosstab-table">
+          <thead>
+            <tr>
+              @for (rowField of store.crosstabMatrix().rowFields; track rowField.id) {
+                <th class="crosstab-row-heading" rowspan="2">{{ rowField.label }}</th>
+              }
+              @for (columnGroup of store.crosstabMatrix().columnGroups; track columnGroup.key) {
+                <th class="crosstab-group-heading" [attr.colspan]="columnGroup.values.length">
+                  {{ columnGroup.label }}
+                </th>
+              }
+              @if (store.report().crosstab.includeRowTotals) {
+                <th
+                  class="crosstab-group-heading total-heading"
+                  [attr.colspan]="store.crosstabMatrix().valueDefinitions.length"
+                >
+                  Row total
+                </th>
+              }
+            </tr>
+            <tr>
+              @for (columnGroup of store.crosstabMatrix().columnGroups; track columnGroup.key) {
+                @for (value of columnGroup.values; track value.key) {
+                  <th class="crosstab-value-heading">{{ value.label }}</th>
+                }
+              }
+              @if (store.report().crosstab.includeRowTotals) {
+                @for (value of store.crosstabMatrix().valueDefinitions; track value.id) {
+                  <th class="crosstab-value-heading total-heading">
+                    {{ value.aggregation }} {{ value.label }}
+                  </th>
+                }
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of store.crosstabMatrix().rows; track row.key) {
+              <tr>
+                @for (label of row.labels; track label) {
+                  <th class="crosstab-row-label">{{ label }}</th>
+                }
+                @for (columnGroup of store.crosstabMatrix().columnGroups; track columnGroup.key) {
+                  @for (value of columnGroup.values; track value.key) {
+                    <td>{{ formatValue(row.cells[value.key]) }}</td>
+                  }
+                }
+                @if (store.report().crosstab.includeRowTotals) {
+                  @for (value of store.crosstabMatrix().valueDefinitions; track value.id) {
+                    <td class="total-cell row-total-cell">
+                      {{ formatValue(row.totalCells[value.id]) }}
+                    </td>
+                  }
+                }
+              </tr>
+            }
+          </tbody>
+          @if (store.crosstabMatrix().footerRows.length > 0) {
+            <tfoot>
+              @for (footerRow of store.crosstabMatrix().footerRows; track footerRow.labels[0]) {
+                <tr>
+                  <th
+                    class="crosstab-footer-label"
+                    [attr.colspan]="store.crosstabMatrix().rowFields.length"
+                  >
+                    {{ footerRow.labels[0] }}
+                  </th>
+                  @for (columnGroup of store.crosstabMatrix().columnGroups; track columnGroup.key) {
+                    @for (value of columnGroup.values; track value.key) {
+                      <td class="total-cell">
+                        {{ formatValue(footerRow.cells[value.key]) }}
+                      </td>
+                    }
+                  }
+                  @if (store.report().crosstab.includeRowTotals) {
+                    @for (value of store.crosstabMatrix().valueDefinitions; track value.id) {
+                      <td class="total-cell row-total-cell">
+                        {{ formatValue(footerRow.totalCells[value.id]) }}
+                      </td>
+                    }
+                  }
+                </tr>
+              }
+            </tfoot>
+          }
+        </table>
+      </div>
+    }
+  </div>
+</section>

@@ -1,0 +1,68 @@
+<section class="preview-panel">
+  <div class="section-heading">
+    <h2>Preview · {{ store.activeQueryLabel() }}</h2>
+    <span>
+      {{ store.activePreviewRows().length }} rows ·
+      {{ store.activePreviewColumns().length }} visible columns
+    </span>
+  </div>
+
+  <div class="preview-summary">
+    <span>{{ store.activeFilteredSourceRows().length }} rows after prompted filters</span>
+    <span>{{ store.activePreviewSourceRows().length }} rows after column criteria</span>
+    <span>{{ store.activeQuery().filters.length }} filters</span>
+    <span>{{ store.activeValidationIssues().length }} validation issues</span>
+  </div>
+
+  @if (store.activeValidationIssues().length > 0) {
+    <div class="preview-validation">
+      <strong>Preview needs attention</strong>
+      <ul>
+        @for (issue of store.activeValidationIssues(); track issue) {
+          <li>{{ issue }}</li>
+        }
+      </ul>
+    </div>
+  }
+
+  @if (store.activePreviewColumns().length === 0) {
+    <div class="preview-empty">
+      <h3>No visible columns</h3>
+      <p>Enable at least one query column to preview report output.</p>
+    </div>
+  } @else if (store.activePreviewRows().length === 0) {
+    <div class="preview-empty">
+      <h3>No matching rows</h3>
+      <p>Current filters or column criteria return no mock records.</p>
+    </div>
+  } @else {
+    <div class="data-table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            @for (column of store.activePreviewColumns(); track column.id) {
+              <th [class.data-table__sorted]="column.sortDirection !== 'none'">
+                <span>{{ column.alias }}</span>
+                @if (fieldForColumn(column.fieldId); as field) {
+                  <small>{{ field.label }}</small>
+                }
+                @if (column.sortDirection !== 'none') {
+                  <em>{{ column.sortDirection }}</em>
+                }
+              </th>
+            }
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of store.activePreviewRows(); track row.id) {
+            <tr>
+              @for (column of store.activePreviewColumns(); track column.id) {
+                <td>{{ formatValue(row.cells[column.id]) }}</td>
+              }
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</section>

@@ -24,6 +24,7 @@ import {
   ReportDefinition,
   SortDirection,
 } from '../models/report-definition.model';
+import { createSubqueryTableId } from './query-subquery-datasource.service';
 
 const mockReportStorageKey = 'query-builder.mock-report';
 const mockReportStorageSchemaVersion = 2;
@@ -253,10 +254,6 @@ function createSubqueryTable(
     subqueryId: id,
     fields,
   };
-}
-
-function createSubqueryTableId(subqueryId: string): string {
-  return `subquery:${subqueryId}`;
 }
 
 function normalizeColumn(

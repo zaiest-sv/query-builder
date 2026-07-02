@@ -62,9 +62,17 @@ export class QueryPropertiesPanelComponent {
   }
 
   protected selectedColumnsForTable(tableId: string): number {
+    return this.columnsForTable(tableId).length;
+  }
+
+  protected columnsForTable(tableId: string): readonly QueryColumn[] {
     return this.store
       .selectedColumns()
-      .filter((column) => this.store.fieldLookup().get(column.fieldId)?.tableId === tableId).length;
+      .filter((column) => this.store.fieldLookup().get(column.fieldId)?.tableId === tableId);
+  }
+
+  protected fieldLabelForColumn(column: QueryColumn): string {
+    return this.store.fieldLookup().get(column.fieldId)?.label ?? column.fieldId;
   }
 
   protected tableForField(field: DataSourceField): DataSourceTable | null {

@@ -216,7 +216,11 @@ export class CrosstabEngineService {
     this.updateBucketMap(columnBuckets, valueId, value);
   }
 
-  private updateBucketMap(buckets: ReadonlyMap<string, Bucket>, key: string, value: CellValue): void {
+  private updateBucketMap(
+    buckets: ReadonlyMap<string, Bucket>,
+    key: string,
+    value: CellValue,
+  ): void {
     const mutableBuckets = buckets as Map<string, Bucket>;
     const nextBucket = this.addValue(mutableBuckets.get(key) ?? emptyBucket, value);
     mutableBuckets.set(key, nextBucket);
@@ -226,8 +230,18 @@ export class CrosstabEngineService {
     const numericValue = typeof value === 'number' ? value : null;
     const count = value === null || value === '' ? bucket.count : bucket.count + 1;
     const sum = numericValue === null ? bucket.sum : bucket.sum + numericValue;
-    const min = numericValue === null ? bucket.min : bucket.min === null ? numericValue : Math.min(bucket.min, numericValue);
-    const max = numericValue === null ? bucket.max : bucket.max === null ? numericValue : Math.max(bucket.max, numericValue);
+    const min =
+      numericValue === null
+        ? bucket.min
+        : bucket.min === null
+          ? numericValue
+          : Math.min(bucket.min, numericValue);
+    const max =
+      numericValue === null
+        ? bucket.max
+        : bucket.max === null
+          ? numericValue
+          : Math.max(bucket.max, numericValue);
 
     return {
       count,

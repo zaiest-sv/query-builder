@@ -1,0 +1,24 @@
+<section class="advanced-layout">
+  <div class="validation-panel">
+    <div class="panel-heading">
+      <h2>Validation · {{ store.activeQueryLabel() }}</h2>
+      <span>{{ store.activeValidationIssues().length }}</span>
+    </div>
+    @if (store.activeValidationIssues().length === 0) {
+      <p class="empty-state">Active query is valid.</p>
+    } @else {
+      <ul>
+        @for (issue of store.activeValidationIssues(); track issue) {
+          <li>{{ issue }}</li>
+        }
+      </ul>
+    }
+    <div class="global-validation-summary">
+      Full report validation: {{ store.validationIssues().length }} issues
+    </div>
+  </div>
+  <div class="definition-panel">
+    <h2>Report Definition</h2>
+    <textarea readonly [value]="store.reportJson()" aria-label="Report definition JSON"></textarea>
+  </div>
+</section>
