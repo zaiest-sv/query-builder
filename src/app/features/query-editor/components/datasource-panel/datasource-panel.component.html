@@ -1,131 +1,247 @@
 <div class="panel-tabs">
-  <button class="panel-tab panel-tab--active" type="button">Datasource</button>
-  <button class="panel-tab" type="button">Subquery</button>
+  <button
+    class="panel-tab"
+    type="button"
+    [class.panel-tab--active]="activePanelTab() === 'datasource'"
+    (click)="setActivePanelTab('datasource')"
+  >
+    Datasource
+  </button>
+  <button
+    class="panel-tab"
+    type="button"
+    [class.panel-tab--active]="activePanelTab() === 'subquery'"
+    (click)="setActivePanelTab('subquery')"
+  >
+    Subquery
+  </button>
 </div>
 
-<label class="search-box">
-  <span aria-hidden="true">Find</span>
-  <input
-    type="search"
-    [value]="store.searchTerm()"
-    (input)="setSearchTerm($event)"
-    aria-label="Find datasource fields"
-  />
-</label>
+@if (activePanelTab() === 'datasource') {
+  <label class="search-box">
+    <span aria-hidden="true">Find</span>
+    <input
+      type="search"
+      [value]="store.searchTerm()"
+      (input)="setSearchTerm($event)"
+      aria-label="Find datasource fields"
+    />
+  </label>
 
-<div class="schema-tree">
-  @for (group of store.filteredMetadata(); track group.id) {
-    <details class="tree-group" open>
-      <summary>
-        <span class="tree-icon tree-icon--group" aria-hidden="true"></span>
-        <span>{{ group.label }}</span>
-      </summary>
+  <div class="schema-tree">
+    @for (group of store.filteredMetadata(); track group.id) {
+      <details class="tree-group" open>
+        <summary>
+          <span class="tree-icon tree-icon--group" aria-hidden="true"></span>
+          <span>{{ group.label }}</span>
+        </summary>
 
-      @for (table of group.tables; track table.id) {
-        <div class="tree-table">
-          <button
-            class="tree-toggle tree-action"
-            type="button"
-            [attr.aria-expanded]="isTableExpanded(table.id)"
-            [attr.aria-label]="
-              isTableExpanded(table.id)
-                ? 'Collapse fields for ' + table.label
-                : 'Expand fields for ' + table.label
-            "
-            (click)="toggleTableExpanded(table.id, $event)"
-          >
-            <span
-              class="tree-toggle__chevron"
-              [class.tree-toggle__chevron--expanded]="isTableExpanded(table.id)"
-              aria-hidden="true"
-            ></span>
-          </button>
-          <button
-            class="tree-table__name"
-            type="button"
-            draggable="true"
-            [class.tree-table__name--active]="store.selectedTableId() === table.id"
-            [class.tree-table__name--selected]="isSourceTable(table.id)"
-            [class.tree-table__name--dragging]="draggedTableId() === table.id"
-            [attr.aria-label]="'Use datasource table ' + table.label"
-            title="Drag table to the canvas"
-            (click)="useTable(table.id)"
-            (mousedown)="startTablePointerDrag(table.id, table.label, $event)"
-            (dragstart)="startTableDrag(table.id, $event)"
-            (dragend)="finishTableDrag()"
-          >
-            <span class="tree-icon tree-icon--table" aria-hidden="true"></span>
-            <span class="tree-table__text">
-              <strong>{{ table.label }}</strong>
-              <small>{{ table.schema }}.{{ table.name }}</small>
-            </span>
-          </button>
-          <button
-            class="icon-button tree-action"
-            type="button"
-            title="Use table"
-            aria-label="Use table"
-            (click)="useTable(table.id)"
-          >
-            +
-          </button>
-          <div class="tree-table__menu-shell">
+        @for (table of group.tables; track table.id) {
+          <div class="tree-table">
             <button
-              class="icon-button tree-action"
+              class="tree-toggle tree-action"
               type="button"
-              title="Table actions"
-              [attr.aria-label]="'Table actions for ' + table.label"
-              [attr.aria-expanded]="isTableMenuOpen(table.id)"
-              (click)="toggleTableMenu(table.id, $event)"
+              [attr.aria-expanded]="isTableExpanded(table.id)"
+              [attr.aria-label]="
+                isTableExpanded(table.id)
+                  ? 'Collapse fields for ' + table.label
+                  : 'Expand fields for ' + table.label
+              "
+              (click)="toggleTableExpanded(table.id, $event)"
             >
-              ...
+              <span
+                class="tree-toggle__chevron"
+                [class.tree-toggle__chevron--expanded]="isTableExpanded(table.id)"
+                aria-hidden="true"
+              ></span>
             </button>
+            <button
+              class="tree-table__name"
+              type="button"
+              draggable="true"
+              [class.tree-table__name--active]="store.selectedTableId() === table.id"
+              [class.tree-table__name--selected]="isSourceTable(table.id)"
+              [class.tree-table__name--dragging]="draggedTableId() === table.id"
+              [disabled]="!canUseDatasourceTable(table.id)"
+              [attr.aria-label]="'Use datasource table ' + table.label"
+              title="Drag table to the canvas"
+              (click)="useTable(table.id)"
+              (mousedown)="startTablePointerDrag(table.id, table.label, $event)"
+              (dragstart)="startTableDrag(table.id, $event)"
+              (dragend)="finishTableDrag()"
+            >
+              <span class="tree-icon tree-icon--table" aria-hidden="true"></span>
+              <span class="tree-table__text">
+                <strong>{{ table.label }}</strong>
+                <small>{{ table.schema }}.{{ table.name }}</small>
+              </span>
+            </button>
+            <div class="tree-table__menu-shell">
+              <button
+                class="icon-button tree-action"
+                type="button"
+                title="Table actions"
+                [attr.aria-label]="'Table actions for ' + table.label"
+                [attr.aria-expanded]="isTableMenuOpen(table.id)"
+                (click)="toggleTableMenu(table.id, $event)"
+              >
+                ...
+              </button>
 
-            @if (isTableMenuOpen(table.id)) {
-              <div class="tree-table-menu" role="menu">
-                <button type="button" role="menuitem" (click)="useTable(table.id)">
-                  Use table
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  (click)="toggleTableExpanded(table.id, $event)"
-                >
-                  {{ isTableExpanded(table.id) ? 'Collapse fields' : 'Expand fields' }}
-                </button>
-                <button type="button" role="menuitem" (click)="addAllFields(table.id)">
-                  Add all fields
-                </button>
-                @if (isSourceTable(table.id)) {
+              @if (isTableMenuOpen(table.id)) {
+                <div class="tree-table-menu" role="menu">
                   <button
-                    class="tree-table-menu__danger"
                     type="button"
                     role="menuitem"
-                    (click)="removeSourceTable(table.id)"
+                    [disabled]="!canUseDatasourceTable(table.id)"
+                    (click)="useTable(table.id)"
                   >
-                    Remove source
+                    Use table
                   </button>
-                }
-              </div>
-            }
+                  <button
+                    type="button"
+                    role="menuitem"
+                    (click)="toggleTableExpanded(table.id, $event)"
+                  >
+                    {{ isTableExpanded(table.id) ? 'Collapse fields' : 'Expand fields' }}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    [disabled]="!canUseDatasourceTable(table.id)"
+                    (click)="addAllFields(table.id)"
+                  >
+                    Add all fields
+                  </button>
+                  @if (isSourceTable(table.id)) {
+                    <button
+                      class="tree-table-menu__danger"
+                      type="button"
+                      role="menuitem"
+                      (click)="removeSourceTable(table.id)"
+                    >
+                      Remove source
+                    </button>
+                  }
+                </div>
+              }
+            </div>
           </div>
-        </div>
 
-        @if (isTableExpanded(table.id)) {
-          <div class="tree-fields">
-            @for (field of table.fields; track field.id) {
-              <button class="field-row" type="button" (click)="store.addColumn(field.id)">
-                <span class="tree-icon tree-icon--field" aria-hidden="true"></span>
-                <span class="field-row__label">{{ field.label }}</span>
-                <small>{{ field.type }}</small>
-              </button>
+          @if (isTableExpanded(table.id)) {
+            <div class="tree-fields">
+              @for (field of table.fields; track field.id) {
+                <button
+                  class="field-row"
+                  type="button"
+                  [disabled]="!canUseDatasourceTable(table.id)"
+                  (click)="store.addColumn(field.id)"
+                >
+                  <span class="tree-icon tree-icon--field" aria-hidden="true"></span>
+                  <span class="field-row__label">{{ field.label }}</span>
+                  <small>{{ field.type }}</small>
+                </button>
+              }
+            </div>
+          }
+        }
+      </details>
+    }
+  </div>
+} @else {
+  <div class="subquery-panel">
+    <button class="subquery-create" type="button" (click)="store.addSubquery()">+ Subquery</button>
+
+    @if (store.report().subqueries.length === 0) {
+      <div class="subquery-empty">
+        <h3>No subqueries</h3>
+        <p>Create a subquery, select its canvas, then use it as a datasource in Main.</p>
+      </div>
+    } @else {
+      @for (subquery of store.report().subqueries; track subquery.id) {
+        <section
+          class="subquery-card"
+          [class.subquery-card--active]="store.activeQueryId() === subquery.id"
+          [class.subquery-card--invalid]="subqueryIssues(subquery).length > 0"
+        >
+          <div class="subquery-editor">
+            <label>
+              Name
+              <input
+                type="text"
+                [value]="subquery.name"
+                (input)="updateSubqueryName(subquery.id, $event)"
+              />
+            </label>
+            <label>
+              Alias
+              <input
+                type="text"
+                [value]="subquery.alias"
+                (input)="updateSubqueryAlias(subquery.id, $event)"
+              />
+            </label>
+          </div>
+
+          <div class="subquery-state">
+            @if (subqueryIssues(subquery).length === 0) {
+              <span class="subquery-state__pill subquery-state__pill--ready">Ready</span>
+            } @else {
+              <span class="subquery-state__pill subquery-state__pill--warning">Needs setup</span>
+            }
+            <span>{{ subquerySourceCount(subquery) }} sources</span>
+            <span>{{ outputColumnsForSubquery(subquery).length }} outputs</span>
+            <span>{{ subquery.query.joins.length }} joins</span>
+          </div>
+
+          <div class="subquery-output">
+            <strong>Output columns</strong>
+            @if (outputColumnsForSubquery(subquery).length === 0) {
+              <p>No visible output columns selected.</p>
+            } @else {
+              @for (column of outputColumnsForSubquery(subquery); track column.id) {
+                <div class="subquery-output__row">
+                  <span>{{ column.alias }}</span>
+                  @if (outputFieldForColumn(column); as field) {
+                    <small>{{ field.type }}</small>
+                  } @else {
+                    <small>missing</small>
+                  }
+                </div>
+              }
             }
           </div>
-        }
+
+          @if (subqueryIssues(subquery).length > 0) {
+            <div class="subquery-issues">
+              @for (issue of subqueryIssues(subquery); track issue) {
+                <span>{{ issue }}</span>
+              }
+            </div>
+          }
+
+          <div class="subquery-actions">
+            <button type="button" (click)="store.selectSubquery(subquery.id)">Edit</button>
+            <button
+              type="button"
+              [disabled]="!canUseSubqueryAsSource(subquery.id)"
+              (click)="useSubqueryAsSource(subquery.id)"
+            >
+              Use
+            </button>
+            <button
+              class="subquery-actions__danger"
+              type="button"
+              (click)="store.removeSubquery(subquery.id)"
+            >
+              x
+            </button>
+          </div>
+        </section>
       }
-    </details>
-  }
-</div>
+    }
+  </div>
+}
 
 @if (tableDragGhost(); as ghost) {
   <div class="table-drag-ghost" [style.left.px]="ghost.x" [style.top.px]="ghost.y">

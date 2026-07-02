@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import {
   DataSourceField,
   DataSourceTable,
@@ -39,6 +39,9 @@ const joinOperators: readonly QueryJoinOperator[] = [
   templateUrl: './query-properties-panel.component.html',
   styleUrl: './query-properties-panel.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: {
+    '[class.query-side-card--collapsed]': 'isCollapsed()',
+  },
 })
 export class QueryPropertiesPanelComponent {
   protected readonly joinTypes = joinTypes;
@@ -46,6 +49,11 @@ export class QueryPropertiesPanelComponent {
   protected readonly filterOperators = filterOperators;
   protected readonly joinOperators = joinOperators;
   protected readonly store = inject(QueryEditorStore);
+  protected readonly isCollapsed = signal(false);
+
+  protected toggleCollapsed(): void {
+    this.isCollapsed.update((isCollapsed) => !isCollapsed);
+  }
 
   protected joinsForTable(tableId: string): readonly CanvasJoin[] {
     return this.store
@@ -72,7 +80,7 @@ export class QueryPropertiesPanelComponent {
   }
 
   protected filtersForField(fieldId: string): readonly QueryFilter[] {
-    return this.store.report().query.filters.filter((filter) => filter.fieldId === fieldId);
+    return this.store.activeQuery().filters.filter((filter) => filter.fieldId === fieldId);
   }
 
   protected toggleFieldColumn(fieldId: string, event: Event): void {

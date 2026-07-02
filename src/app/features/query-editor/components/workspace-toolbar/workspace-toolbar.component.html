@@ -1,3 +1,27 @@
+<div class="workspace-switcher" aria-label="Query workspace">
+  <button
+    class="workspace-tab"
+    type="button"
+    [class.workspace-tab--active]="store.activeQueryId() === 'main'"
+    (click)="store.selectMainQuery()"
+  >
+    Main
+  </button>
+  @for (subquery of store.report().subqueries; track subquery.id) {
+    <button
+      class="workspace-tab"
+      type="button"
+      [class.workspace-tab--active]="store.activeQueryId() === subquery.id"
+      (click)="store.selectSubquery(subquery.id)"
+    >
+      {{ subquery.name }}
+    </button>
+  }
+  <button class="workspace-tab workspace-tab--add" type="button" (click)="store.addSubquery()">
+    + Subquery
+  </button>
+</div>
+
 <div class="source-strip" aria-label="Selected sources">
   @for (table of store.selectedTables(); track table.id) {
     <span class="source-chip">
@@ -16,7 +40,9 @@
 </div>
 
 <div class="toolbar-actions">
-  <button class="icon-button icon-button--wide" type="button" title="SQL" aria-label="SQL">SQL</button>
+  <button class="icon-button icon-button--wide" type="button" title="SQL" aria-label="SQL">
+    SQL
+  </button>
   <button
     class="icon-button icon-button--wide"
     type="button"

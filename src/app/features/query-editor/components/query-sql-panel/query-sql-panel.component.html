@@ -1,5 +1,21 @@
 <div class="panel-heading">
-  <h2>SQL</h2>
-  <span>Preview</span>
+  <div>
+    <h2>SQL</h2>
+    <small>{{ store.activeQueryLabel() }}</small>
+  </div>
+  <div class="panel-heading__actions">
+    <span>{{ store.activeValidationIssues().length === 0 ? 'Ready' : 'Needs review' }}</span>
+    <button
+      type="button"
+      [title]="isCollapsed() ? 'Expand SQL' : 'Collapse SQL'"
+      [attr.aria-label]="isCollapsed() ? 'Expand SQL' : 'Collapse SQL'"
+      [attr.aria-expanded]="!isCollapsed()"
+      (click)="toggleCollapsed()"
+    >
+      {{ isCollapsed() ? '+' : '-' }}
+    </button>
+  </div>
 </div>
-<pre>{{ store.sql() }}</pre>
+@if (!isCollapsed()) {
+  <pre>{{ store.activeSql() }}</pre>
+}

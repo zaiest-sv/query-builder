@@ -9,7 +9,10 @@ import {
   CellValue,
   CrosstabAggregation,
   DataSourceField,
+  FieldType,
   FilterOperator,
+  QueryFilter,
+  QueryParameter,
 } from './models/report-definition.model';
 import { QueryEditorStore } from './services/query-editor-store.service';
 
@@ -36,6 +39,7 @@ const filterOperators: readonly FilterOperator[] = [
   'lessThan',
   'isEmpty',
 ];
+const fieldTypes: readonly FieldType[] = ['string', 'number', 'date', 'boolean'];
 const aggregations: readonly CrosstabAggregation[] = ['count', 'sum', 'avg', 'min', 'max'];
 const columnGridResizerHeight = 12;
 const defaultColumnGridHeight = 132;
@@ -58,13 +62,31 @@ export class QueryEditorComponent {
   protected readonly store = inject(QueryEditorStore);
   protected readonly tabs = tabs;
   protected readonly filterOperators = filterOperators;
+  protected readonly fieldTypes = fieldTypes;
   protected readonly aggregations = aggregations;
   protected readonly activeTab = signal<EditorTab>('query');
   protected readonly filterFieldId = signal(this.store.fieldsForSelectedSources()[0]?.id ?? '');
-  protected readonly crosstabRowFieldId = signal('Encounter.Provider');
-  protected readonly crosstabColumnFieldId = signal('Encounter.Status');
-  protected readonly crosstabValueFieldId = signal('Encounter.EncounterId');
+  protected readonly activeFilterFieldId = computed(() => {
+    const fields = this.store.fieldsForSelectedSources();
+    const selectedFieldId = this.filterFieldId();
+
+    return fields.some((field) => field.id === selectedFieldId)
+      ? selectedFieldId
+      : (fields[0]?.id ?? '');
+  });
+  protected readonly crosstabRowFieldId = signal('column-provider');
+  protected readonly crosstabColumnFieldId = signal('column-status');
+  protected readonly crosstabValueFieldId = signal('column-balance');
   protected readonly crosstabAggregation = signal<CrosstabAggregation>('count');
+  protected readonly activeCrosstabRowFieldId = computed(() =>
+    this.resolveCrosstabFieldId(this.crosstabRowFieldId()),
+  );
+  protected readonly activeCrosstabColumnFieldId = computed(() =>
+    this.resolveCrosstabFieldId(this.crosstabColumnFieldId()),
+  );
+  protected readonly activeCrosstabValueFieldId = computed(() =>
+    this.resolveCrosstabFieldId(this.crosstabValueFieldId()),
+  );
   protected readonly columnGridHeight = signal(defaultColumnGridHeight);
   protected readonly columnGridPanelHeight = computed(
     () => `${this.columnGridHeight() + columnGridResizerHeight}px`,
@@ -78,8 +100,24 @@ export class QueryEditorComponent {
 
     return baseCount + totalCount;
   });
+  protected readonly crosstabCellCount = computed(
+    () => this.store.crosstabMatrix().rows.length * this.valueColumnCount(),
+  );
+  protected readonly canRenderCrosstab = computed(() => {
+    const matrix = this.store.crosstabMatrix();
+
+    return (
+      matrix.rowFields.length > 0 &&
+      matrix.columnFields.length > 0 &&
+      matrix.valueDefinitions.length > 0
+    );
+  });
 
   protected setActiveTab(tab: EditorTab): void {
+    if (tab === 'crosstab') {
+      this.store.selectMainQuery();
+    }
+
     this.activeTab.set(tab);
   }
 
@@ -92,7 +130,11 @@ export class QueryEditorComponent {
   }
 
   protected addFilter(): void {
-    this.store.addFilter(this.filterFieldId());
+    const fieldId = this.activeFilterFieldId();
+
+    if (fieldId) {
+      this.store.addFilter(fieldId);
+    }
   }
 
   protected updateFilterOperator(filterId: string, event: Event): void {
@@ -105,6 +147,60 @@ export class QueryEditorComponent {
 
   protected updateFilterParameter(filterId: string, event: Event): void {
     this.store.updateFilterParameter(filterId, readControlValue(event));
+  }
+
+  protected addParameter(): void {
+    this.store.addParameter();
+  }
+
+  protected addParameterForFilter(filterId: string): void {
+    this.store.addParameterForFilter(filterId);
+  }
+
+  protected updateParameterName(parameterId: string, event: Event): void {
+    this.store.updateParameterName(parameterId, readControlValue(event));
+  }
+
+  protected updateParameterLabel(parameterId: string, event: Event): void {
+    this.store.updateParameterLabel(parameterId, readControlValue(event));
+  }
+
+  protected updateParameterType(parameterId: string, event: Event): void {
+    this.store.updateParameterType(parameterId, readControlValue(event) as FieldType);
+  }
+
+  protected updateParameterRequired(parameterId: string, event: Event): void {
+    this.store.updateParameterRequired(parameterId, readCheckedValue(event));
+  }
+
+  protected updateParameterDefaultValue(parameterId: string, event: Event): void {
+    this.store.updateParameterDefaultValue(parameterId, readControlValue(event));
+  }
+
+  protected removeParameter(parameterId: string): void {
+    this.store.removeParameter(parameterId);
+  }
+
+  protected parameterForFilter(filter: QueryFilter): QueryParameter | null {
+    return (
+      this.store
+        .activeQuery()
+        .parameters.find((parameter) => parameter.name === filter.parameterName) ?? null
+    );
+  }
+
+  protected filterValueInputType(filter: QueryFilter): string {
+    const field = this.store.fieldLookup().get(filter.fieldId);
+
+    if (field?.type === 'date') {
+      return 'date';
+    }
+
+    if (field?.type === 'number') {
+      return 'number';
+    }
+
+    return 'text';
   }
 
   protected setCrosstabRowField(event: Event): void {
@@ -124,19 +220,51 @@ export class QueryEditorComponent {
   }
 
   protected addCrosstabRow(): void {
-    this.store.addCrosstabRow(this.crosstabRowFieldId());
+    const fieldId = this.activeCrosstabRowFieldId();
+
+    if (fieldId) {
+      this.store.addCrosstabRow(fieldId);
+    }
   }
 
   protected addCrosstabColumn(): void {
-    this.store.addCrosstabColumn(this.crosstabColumnFieldId());
+    const fieldId = this.activeCrosstabColumnFieldId();
+
+    if (fieldId) {
+      this.store.addCrosstabColumn(fieldId);
+    }
   }
 
   protected addCrosstabValue(): void {
-    this.store.addCrosstabValue(this.crosstabValueFieldId(), this.crosstabAggregation());
+    const fieldId = this.activeCrosstabValueFieldId();
+
+    if (fieldId) {
+      this.store.addCrosstabValue(fieldId, this.crosstabAggregation());
+    }
+  }
+
+  protected moveCrosstabRow(fieldId: string, direction: -1 | 1): void {
+    this.store.moveCrosstabRow(fieldId, direction);
+  }
+
+  protected moveCrosstabColumn(fieldId: string, direction: -1 | 1): void {
+    this.store.moveCrosstabColumn(fieldId, direction);
+  }
+
+  protected moveCrosstabValue(valueId: string, direction: -1 | 1): void {
+    this.store.moveCrosstabValue(valueId, direction);
   }
 
   protected fieldLabel(fieldId: string): string {
     return this.store.fieldLookup().get(fieldId)?.label ?? fieldId;
+  }
+
+  protected crosstabFieldLabel(fieldId: string): string {
+    return this.store.crosstabFieldLookup().get(fieldId)?.label ?? fieldId;
+  }
+
+  protected crosstabFieldType(fieldId: string): string {
+    return this.store.crosstabFieldLookup().get(fieldId)?.type ?? 'missing';
   }
 
   protected fieldForColumn(fieldId: string): DataSourceField | null {
@@ -160,7 +288,18 @@ export class QueryEditorComponent {
   }
 
   protected canUseAggregation(fieldId: string, aggregation: CrosstabAggregation): boolean {
-    return this.store.fieldLookup().get(fieldId)?.aggregations.includes(aggregation) ?? false;
+    return (
+      this.store.crosstabFieldLookup().get(fieldId)?.aggregations.includes(aggregation) ?? false
+    );
+  }
+
+  protected canAddCrosstabValue(fieldId: string, aggregation: CrosstabAggregation): boolean {
+    return (
+      this.canUseAggregation(fieldId, aggregation) &&
+      !this.store
+        .crosstabDefinition()
+        .values.some((value) => value.fieldId === fieldId && value.aggregation === aggregation)
+    );
   }
 
   protected setIncludeRowTotals(event: Event): void {
@@ -169,6 +308,12 @@ export class QueryEditorComponent {
 
   protected setIncludeColumnTotals(event: Event): void {
     this.store.setIncludeColumnTotals(readCheckedValue(event));
+  }
+
+  private resolveCrosstabFieldId(fieldId: string): string {
+    const fields = this.store.crosstabFields();
+
+    return fields.some((field) => field.id === fieldId) ? fieldId : (fields[0]?.id ?? '');
   }
 }
 

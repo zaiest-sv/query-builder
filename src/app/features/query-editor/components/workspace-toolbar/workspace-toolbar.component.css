@@ -1,6 +1,7 @@
 :host {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
   gap: 12px;
   min-width: 0;
   min-height: 52px;
@@ -11,6 +12,7 @@
 
 .source-strip,
 .toolbar-actions,
+.workspace-switcher,
 .source-chip {
   display: flex;
   align-items: center;
@@ -20,6 +22,33 @@
 
 .source-strip {
   flex-wrap: wrap;
+}
+
+.workspace-switcher {
+  flex-wrap: wrap;
+}
+
+.workspace-tab {
+  min-height: 30px;
+  border: 1px solid var(--app-border);
+  border-radius: 7px;
+  background: var(--app-surface-muted);
+  color: var(--app-muted);
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.workspace-tab--active {
+  border-color: #96c9c3;
+  background: var(--app-accent-soft);
+  color: var(--app-accent-strong);
+}
+
+.workspace-tab--add {
+  color: var(--app-blue);
+  border-color: #b8d0e8;
+  background: var(--app-blue-soft);
 }
 
 .source-chip {
@@ -85,6 +114,7 @@
 }
 
 .icon-button:focus-visible,
+.workspace-tab:focus-visible,
 .source-chip button:focus-visible {
   outline: 2px solid var(--app-accent);
   outline-offset: 2px;
@@ -93,7 +123,7 @@
 @media (max-width: 720px) {
   :host {
     align-items: stretch;
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
 
   .toolbar-actions {

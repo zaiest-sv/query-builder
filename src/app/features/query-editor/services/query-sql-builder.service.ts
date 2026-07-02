@@ -9,6 +9,7 @@ import {
   QueryJoinCondition,
   QueryJoinOperator,
   QueryJoinType,
+  QueryDocument,
   ReportDefinition,
 } from '../models/report-definition.model';
 
@@ -35,7 +36,17 @@ export class QuerySqlBuilderService {
     tableLookup: ReadonlyMap<string, DataSourceTable>,
     fieldLookup: ReadonlyMap<string, DataSourceField>,
   ): string {
-    const selectedColumns = report.query.columns.filter((column) => column.visible);
+    return this.buildQuery(report.query, report, tableLookup, fieldLookup);
+  }
+
+  buildQuery(
+    query: QueryDocument,
+    report: ReportDefinition,
+    tableLookup: ReadonlyMap<string, DataSourceTable>,
+    fieldLookup: ReadonlyMap<string, DataSourceField>,
+    visitedSubqueryIds: ReadonlySet<string> = new Set(),
+  ): string {
+    const selectedColumns = query.columns.filter((column) => column.visible);
     const selectLines =
       selectedColumns.length === 0
         ? ['  *']
@@ -47,17 +58,30 @@ export class QuerySqlBuilderService {
 
             return `  ${expression} AS ${quoteIdentifier(column.alias)}`;
           });
-    const tables = report.query.sourceTableIds
+    const tables = query.sourceTableIds
       .map((tableId) => tableLookup.get(tableId))
       .filter((table): table is DataSourceTable => table !== undefined);
     const primaryTable = tables[0];
     const fromLine = primaryTable
-      ? `FROM ${this.createTableExpression(primaryTable)}`
+      ? `FROM ${this.createTableExpression(
+          primaryTable,
+          report,
+          tableLookup,
+          fieldLookup,
+          visitedSubqueryIds,
+        )}`
       : 'FROM <select a datasource>';
     const joinLines = primaryTable
-      ? this.createJoinLines(tables, report.query.joins, tableLookup, fieldLookup)
+      ? this.createJoinLines(
+          tables,
+          query.joins,
+          report,
+          tableLookup,
+          fieldLookup,
+          visitedSubqueryIds,
+        )
       : [];
-    const whereLines = report.query.filters.map((filter) => {
+    const whereLines = query.filters.map((filter) => {
       const field = fieldLookup.get(filter.fieldId);
       const expression = field ? this.createFieldExpression(field, tableLookup) : filter.fieldId;
       const value = filter.parameterName
@@ -74,12 +98,16 @@ export class QuerySqlBuilderService {
 
       return `  ${expression} ${operatorLabels[filter.operator]} ${value}`;
     });
-    const columnCriteriaLines = report.query.columns
+    const columnCriteriaLines = query.columns
       .map((column) => {
         const field = fieldLookup.get(column.fieldId);
-        const expression = field ? this.createFieldExpression(field, tableLookup) : column.expression;
+        const expression = field
+          ? this.createFieldExpression(field, tableLookup)
+          : column.expression;
         const criteria = [column.criteria, ...(column.orCriteria ?? [])]
-          .map((value) => createCriteriaExpression(expression, value ?? '', field?.type ?? 'string'))
+          .map((value) =>
+            createCriteriaExpression(expression, value ?? '', field?.type ?? 'string'),
+          )
           .filter((value): value is string => value !== null);
 
         if (criteria.length === 0) {
@@ -89,14 +117,14 @@ export class QuerySqlBuilderService {
         return criteria.length === 1 ? `  ${criteria[0]}` : `  (${criteria.join(' OR ')})`;
       })
       .filter((value): value is string => value !== null);
-    const groupByLines = report.query.columns
+    const groupByLines = query.columns
       .filter((column) => column.groupBy === true)
       .map((column) => {
         const field = fieldLookup.get(column.fieldId);
 
         return field ? this.createFieldExpression(field, tableLookup) : column.expression;
       });
-    const orderLines = report.query.columns
+    const orderLines = query.columns
       .filter((column) => column.sortDirection !== 'none')
       .map((column) => `${quoteIdentifier(column.alias)} ${column.sortDirection.toUpperCase()}`);
 
@@ -113,7 +141,45 @@ export class QuerySqlBuilderService {
     ].join('\n');
   }
 
-  private createTableExpression(table: DataSourceTable): string {
+  private createTableExpression(
+    table: DataSourceTable,
+    report: ReportDefinition,
+    tableLookup: ReadonlyMap<string, DataSourceTable>,
+    fieldLookup: ReadonlyMap<string, DataSourceField>,
+    visitedSubqueryIds: ReadonlySet<string>,
+  ): string {
+    if (table.sourceType === 'subquery' && table.subqueryId) {
+      if (visitedSubqueryIds.has(table.subqueryId)) {
+        return `(\n  SELECT NULL AS [CircularDependency]\n) AS ${quoteIdentifier(table.alias)}`;
+      }
+
+      const subquery = report.subqueries.find(
+        (currentSubquery) => currentSubquery.id === table.subqueryId,
+      );
+
+      if (subquery) {
+        const nextVisitedSubqueryIds = new Set(visitedSubqueryIds);
+        nextVisitedSubqueryIds.add(subquery.id);
+        const subquerySql = this.buildQuery(
+          subquery.query,
+          {
+            ...report,
+            subqueries: report.subqueries.filter(
+              (currentSubquery) => currentSubquery.id !== subquery.id,
+            ),
+          },
+          tableLookup,
+          fieldLookup,
+          nextVisitedSubqueryIds,
+        )
+          .split('\n')
+          .map((line) => `  ${line}`)
+          .join('\n');
+
+        return `(\n${subquerySql}\n) AS ${quoteIdentifier(table.alias)}`;
+      }
+    }
+
     return `${quoteIdentifier(table.schema)}.${quoteIdentifier(table.name)} AS ${quoteIdentifier(table.alias)}`;
   }
 
@@ -130,8 +196,10 @@ export class QuerySqlBuilderService {
   private createJoinLines(
     tables: readonly DataSourceTable[],
     joins: readonly QueryJoin[],
+    report: ReportDefinition,
     tableLookup: ReadonlyMap<string, DataSourceTable>,
     fieldLookup: ReadonlyMap<string, DataSourceField>,
+    visitedSubqueryIds: ReadonlySet<string>,
   ): readonly string[] {
     const selectedTableIds = new Set(tables.map((table) => table.id));
     const joinedTableIds = new Set<string>([tables[0]?.id ?? '']);
@@ -152,14 +220,33 @@ export class QuerySqlBuilderService {
       }
 
       const connectedJoins = joins.filter((candidateJoin) =>
-        connectsTableToJoinedTable(candidateJoin, table.id, joinedTableIds, selectedTableIds, fieldLookup),
+        connectsTableToJoinedTable(
+          candidateJoin,
+          table.id,
+          joinedTableIds,
+          selectedTableIds,
+          fieldLookup,
+        ),
       );
 
       joinedTableIds.add(table.id);
       joinLines.push(
         connectedJoins.length > 0
-          ? this.createJoinLine(table, connectedJoins, tableLookup, fieldLookup)
-          : `CROSS JOIN ${this.createTableExpression(table)}`,
+          ? this.createJoinLine(
+              table,
+              connectedJoins,
+              report,
+              tableLookup,
+              fieldLookup,
+              visitedSubqueryIds,
+            )
+          : `CROSS JOIN ${this.createTableExpression(
+              table,
+              report,
+              tableLookup,
+              fieldLookup,
+              visitedSubqueryIds,
+            )}`,
       );
     }
 
@@ -169,13 +256,21 @@ export class QuerySqlBuilderService {
   private createJoinLine(
     table: DataSourceTable,
     joins: readonly QueryJoin[],
+    report: ReportDefinition,
     tableLookup: ReadonlyMap<string, DataSourceTable>,
     fieldLookup: ReadonlyMap<string, DataSourceField>,
+    visitedSubqueryIds: ReadonlySet<string>,
   ): string {
     const joinType = joins.find((join) => join.type !== 'cross')?.type ?? 'cross';
 
     if (joinType === 'cross') {
-      return `CROSS JOIN ${this.createTableExpression(table)}`;
+      return `CROSS JOIN ${this.createTableExpression(
+        table,
+        report,
+        tableLookup,
+        fieldLookup,
+        visitedSubqueryIds,
+      )}`;
     }
 
     const conditions = joins
@@ -185,10 +280,22 @@ export class QuerySqlBuilderService {
       .filter((condition): condition is string => condition !== null);
 
     if (conditions.length === 0) {
-      return `CROSS JOIN ${this.createTableExpression(table)}`;
+      return `CROSS JOIN ${this.createTableExpression(
+        table,
+        report,
+        tableLookup,
+        fieldLookup,
+        visitedSubqueryIds,
+      )}`;
     }
 
-    return `${joinKeyword(joinType)} JOIN ${this.createTableExpression(table)} ON ${conditions.join(' AND ')}`;
+    return `${joinKeyword(joinType)} JOIN ${this.createTableExpression(
+      table,
+      report,
+      tableLookup,
+      fieldLookup,
+      visitedSubqueryIds,
+    )} ON ${conditions.join(' AND ')}`;
   }
 
   private createJoinConditionExpression(
@@ -247,7 +354,8 @@ function connectsTableToJoinedTable(
 
     const joinsSelectedTables =
       selectedTableIds.has(fromField.tableId) && selectedTableIds.has(toField.tableId);
-    const startsAtCurrentTable = fromField.tableId === tableId && joinedTableIds.has(toField.tableId);
+    const startsAtCurrentTable =
+      fromField.tableId === tableId && joinedTableIds.has(toField.tableId);
     const endsAtCurrentTable = toField.tableId === tableId && joinedTableIds.has(fromField.tableId);
 
     return joinsSelectedTables && (startsAtCurrentTable || endsAtCurrentTable);

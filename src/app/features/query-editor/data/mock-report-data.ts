@@ -241,19 +241,20 @@ export const MOCK_REPORT: ReportDefinition = {
       },
     ],
   },
+  subqueries: [],
   crosstab: {
-    rowFieldIds: ['Encounter.Provider'],
-    columnFieldIds: ['Encounter.Status'],
+    rowFieldIds: ['column-provider'],
+    columnFieldIds: ['column-status'],
     values: [
       {
         id: 'value-encounters',
-        fieldId: 'Encounter.EncounterId',
+        fieldId: 'column-provider',
         label: 'Encounters',
         aggregation: 'count',
       },
       {
         id: 'value-balance',
-        fieldId: 'FinancialLedger.Balance',
+        fieldId: 'column-balance',
         label: 'Balance',
         aggregation: 'sum',
       },

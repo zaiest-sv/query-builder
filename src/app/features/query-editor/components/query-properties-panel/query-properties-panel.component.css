@@ -1,12 +1,18 @@
 :host {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
   border: 1px solid var(--app-border);
   border-radius: 8px;
   background: var(--app-surface);
   overflow: hidden;
+}
+
+:host(.query-side-card--collapsed) {
+  grid-template-rows: auto;
+  flex: 0 0 auto;
 }
 
 h2,
@@ -51,6 +57,13 @@ select:focus-visible {
   display: grid;
   gap: 3px;
   min-width: 0;
+}
+
+.properties-heading__actions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
 }
 
 .properties-heading span,

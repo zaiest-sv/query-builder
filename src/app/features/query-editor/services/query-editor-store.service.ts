@@ -3,19 +3,24 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
   CellValue,
   CrosstabAggregation,
+  CrosstabDefinition,
   DataRecord,
   DataSourceField,
   DataSourceGroup,
   DataSourceTable,
+  FieldType,
   FilterOperator,
   PreviewRow,
   QueryColumn,
   QueryCanvasTablePosition,
+  QueryDocument,
   QueryFilter,
   QueryJoin,
   QueryJoinCondition,
   QueryJoinOperator,
   QueryJoinType,
+  QueryParameter,
+  QuerySubquery,
   ReportDefinition,
   SaveState,
   SortDirection,
@@ -82,6 +87,8 @@ export type QueryCanvasSelection =
   | { readonly kind: 'field'; readonly fieldId: string }
   | { readonly kind: 'join'; readonly joinId: string };
 
+export type QueryWorkspaceId = 'main' | string;
+
 @Injectable({ providedIn: 'root' })
 export class QueryEditorStore {
   private readonly api = inject(QUERY_EDITOR_API);
@@ -92,6 +99,7 @@ export class QueryEditorStore {
   private readonly metadataSignal = signal<readonly DataSourceGroup[]>([]);
   private readonly sourceRowsSignal = signal<readonly DataRecord[]>([]);
   private readonly reportSignal = signal<ReportDefinition>(createEmptyReport());
+  private readonly activeQueryIdSignal = signal<QueryWorkspaceId>('main');
   private readonly canvasSelectionSignal = signal<QueryCanvasSelection>({ kind: 'none' });
   private readonly searchTermSignal = signal('');
   private readonly selectedTableIdSignal = signal('');
@@ -107,6 +115,7 @@ export class QueryEditorStore {
   private sequence = 1;
 
   readonly metadata = this.metadataSignal.asReadonly();
+  readonly activeQueryId = this.activeQueryIdSignal.asReadonly();
   readonly canvasSelection = this.canvasSelectionSignal.asReadonly();
   readonly report = this.reportSignal.asReadonly();
   readonly searchTerm = this.searchTermSignal.asReadonly();
@@ -115,7 +124,37 @@ export class QueryEditorStore {
   readonly loadState = this.loadStateSignal.asReadonly();
   readonly saveState = this.saveStateSignal.asReadonly();
 
-  readonly allTables = computed(() => this.metadata().flatMap((group) => group.tables));
+  readonly baseTables = computed(() => this.metadata().flatMap((group) => group.tables));
+  readonly baseFieldLookup = computed(
+    () =>
+      new Map(
+        this.baseTables()
+          .flatMap((table) => table.fields)
+          .map((field) => [field.id, field] as const),
+      ),
+  );
+  readonly subqueryTables = computed(() =>
+    this.report().subqueries.map((subquery) =>
+      createSubqueryTable(subquery, this.baseFieldLookup()),
+    ),
+  );
+  readonly metadataWithSubqueries = computed(() => {
+    const subqueryTables = this.subqueryTables();
+
+    return subqueryTables.length === 0
+      ? this.metadata()
+      : [
+          ...this.metadata(),
+          {
+            id: 'subqueries',
+            label: 'Subqueries',
+            tables: subqueryTables,
+          },
+        ];
+  });
+  readonly allTables = computed(() =>
+    this.metadataWithSubqueries().flatMap((group) => group.tables),
+  );
   readonly allFields = computed(() => this.allTables().flatMap((table) => table.fields));
   readonly tableLookup = computed(
     () => new Map(this.allTables().map((table) => [table.id, table] as const)),
@@ -123,13 +162,20 @@ export class QueryEditorStore {
   readonly fieldLookup = computed(
     () => new Map(this.allFields().map((field) => [field.id, field] as const)),
   );
+  readonly activeSubquery = computed(() =>
+    this.activeQueryId() === 'main'
+      ? null
+      : (this.report().subqueries.find((subquery) => subquery.id === this.activeQueryId()) ?? null),
+  );
+  readonly activeQuery = computed(() => this.activeSubquery()?.query ?? this.report().query);
+  readonly activeQueryLabel = computed(() => this.activeSubquery()?.name ?? 'Main Query');
   readonly selectedTables = computed(() =>
-    this.report()
-      .query.sourceTableIds.map((tableId) => this.tableLookup().get(tableId))
+    this.activeQuery()
+      .sourceTableIds.map((tableId) => this.tableLookup().get(tableId))
       .filter((table): table is DataSourceTable => table !== undefined),
   );
   readonly activeTable = computed(() => this.tableLookup().get(this.selectedTableId()) ?? null);
-  readonly selectedColumns = computed(() => this.report().query.columns);
+  readonly selectedColumns = computed(() => this.activeQuery().columns);
   readonly selectedCanvasTable = computed(() => {
     const selection = this.canvasSelection();
 
@@ -143,19 +189,25 @@ export class QueryEditorStore {
   readonly selectedFieldIds = computed(
     () => new Set(this.selectedColumns().map((column) => column.fieldId)),
   );
+  readonly previewDataRows = computed(() =>
+    createPreviewDataRows(this.sourceRowsSignal(), this.report(), this.baseFieldLookup()),
+  );
   readonly previewColumns = computed(() =>
-    this.selectedColumns().filter((column) => column.visible),
+    this.report().query.columns.filter((column) => column.visible),
+  );
+  readonly activePreviewColumns = computed(() =>
+    this.activeQuery().columns.filter((column) => column.visible),
   );
   readonly canvasTablePositions = computed(
     () =>
       new Map(
-        this.report().query.layout.tables.map((position) => [position.tableId, position] as const),
+        this.activeQuery().layout.tables.map((position) => [position.tableId, position] as const),
       ),
   );
   readonly joinedFieldIds = computed(() => {
     const fieldIds = new Set<string>();
 
-    for (const join of this.report().query.joins) {
+    for (const join of this.activeQuery().joins) {
       for (const condition of join.conditions) {
         fieldIds.add(condition.fromFieldId);
         fieldIds.add(condition.toFieldId);
@@ -167,9 +219,22 @@ export class QueryEditorStore {
   readonly fieldsForSelectedSources = computed(() =>
     this.selectedTables().flatMap((table) => table.fields),
   );
-  readonly filteredMetadata = computed(() => filterMetadata(this.metadata(), this.searchTerm()));
+  readonly filteredMetadata = computed(() =>
+    filterMetadata(this.metadataWithSubqueries(), this.searchTerm()),
+  );
   readonly filteredSourceRows = computed(() =>
-    applyPromptFilters(this.sourceRowsSignal(), this.report().query.filters),
+    applyPromptFilters(
+      this.previewDataRows(),
+      this.report().query.filters,
+      this.report().query.parameters,
+    ),
+  );
+  readonly activeFilteredSourceRows = computed(() =>
+    applyPromptFilters(
+      this.previewDataRows(),
+      this.activeQuery().filters,
+      this.activeQuery().parameters,
+    ),
   );
   readonly previewSourceRows = computed(() =>
     sortRows(
@@ -180,15 +245,62 @@ export class QueryEditorStore {
   readonly previewRows = computed(() =>
     projectRows(this.previewSourceRows(), this.previewColumns()),
   );
+  readonly crosstabFields = computed(() =>
+    createCrosstabOutputFields(this.report().query.columns, this.fieldLookup()),
+  );
+  readonly crosstabFieldLookup = computed(
+    () => new Map(this.crosstabFields().map((field) => [field.id, field] as const)),
+  );
+  readonly crosstabDefinition = computed(() =>
+    normalizeCrosstabDefinition(this.report().crosstab, this.report().query.columns),
+  );
+  readonly renderableCrosstabDefinition = computed(() =>
+    createRenderableCrosstabDefinition(this.crosstabDefinition(), this.crosstabFieldLookup()),
+  );
+  readonly crosstabConfigIssues = computed(() =>
+    createCrosstabConfigIssues(this.crosstabDefinition(), this.crosstabFieldLookup()),
+  );
+  readonly crosstabRows = computed(() =>
+    projectRows(this.previewSourceRows(), this.report().query.columns).map((row) => ({
+      id: row.id,
+      ...row.cells,
+    })),
+  );
+  readonly activePreviewSourceRows = computed(() =>
+    sortRows(
+      applyColumnCriteria(this.activeFilteredSourceRows(), this.activeQuery().columns),
+      this.activeQuery().columns,
+    ),
+  );
+  readonly activePreviewRows = computed(() =>
+    projectRows(this.activePreviewSourceRows(), this.activePreviewColumns()),
+  );
   readonly sql = computed(() =>
     this.sqlBuilder.build(this.report(), this.tableLookup(), this.fieldLookup()),
+  );
+  readonly activeSql = computed(() =>
+    this.sqlBuilder.buildQuery(
+      this.activeQuery(),
+      this.report(),
+      this.tableLookup(),
+      this.fieldLookup(),
+    ),
   );
   readonly validationIssues = computed(() =>
     validateReport(this.report(), this.tableLookup(), this.fieldLookup()),
   );
+  readonly activeValidationIssues = computed(() =>
+    validateActiveQuery(
+      this.activeQuery(),
+      this.activeSubquery(),
+      this.report(),
+      this.tableLookup(),
+      this.fieldLookup(),
+    ),
+  );
   readonly canvasJoins = computed(() =>
-    this.report()
-      .query.joins.map((join) => createCanvasJoin(join, this.tableLookup(), this.fieldLookup()))
+    this.activeQuery()
+      .joins.map((join) => createCanvasJoin(join, this.tableLookup(), this.fieldLookup()))
       .filter((join): join is CanvasJoin => join !== null),
   );
   readonly selectedCanvasJoin = computed(() => {
@@ -200,9 +312,9 @@ export class QueryEditorStore {
   });
   readonly crosstabMatrix = computed(() =>
     this.crosstabEngine.createMatrix(
-      this.filteredSourceRows(),
-      this.report().crosstab,
-      this.fieldLookup(),
+      this.crosstabRows(),
+      this.renderableCrosstabDefinition(),
+      this.crosstabFieldLookup(),
     ),
   );
   readonly reportJson = computed(() => JSON.stringify(this.report(), null, 2));
@@ -225,6 +337,7 @@ export class QueryEditorStore {
           this.metadataSignal.set(data.metadata);
           this.sourceRowsSignal.set(data.rows);
           this.reportSignal.set(data.report);
+          this.activeQueryIdSignal.set('main');
           const initialTableId =
             data.report.query.sourceTableIds[0] ?? data.metadata[0]?.tables[0]?.id ?? '';
           this.selectedTableIdSignal.set(initialTableId);
@@ -252,6 +365,110 @@ export class QueryEditorStore {
       });
   }
 
+  selectMainQuery(): void {
+    this.activeQueryIdSignal.set('main');
+    this.clearCanvasSelection();
+  }
+
+  selectSubquery(subqueryId: string): void {
+    const subquery = this.report().subqueries.find(
+      (currentSubquery) => currentSubquery.id === subqueryId,
+    );
+
+    if (!subquery) {
+      return;
+    }
+
+    this.activeQueryIdSignal.set(subquery.id);
+    this.selectedTableIdSignal.set(subquery.query.sourceTableIds[0] ?? '');
+    this.clearCanvasSelection();
+  }
+
+  addSubquery(): void {
+    const index = this.report().subqueries.length + 1;
+    const id = this.createId('subquery');
+    const subquery: QuerySubquery = {
+      id,
+      name: `Subquery ${index}`,
+      alias: `sq${index}`,
+      query: createEmptyQueryDocument(),
+    };
+
+    this.reportSignal.update((report) => ({
+      ...report,
+      subqueries: [...report.subqueries, subquery],
+    }));
+    this.activeQueryIdSignal.set(id);
+    this.clearCanvasSelection();
+    this.markDirty();
+  }
+
+  updateSubqueryName(subqueryId: string, name: string): void {
+    const nextName = name.trim();
+
+    if (!nextName) {
+      return;
+    }
+
+    this.reportSignal.update((report) => ({
+      ...report,
+      subqueries: report.subqueries.map((subquery) =>
+        subquery.id === subqueryId ? { ...subquery, name: nextName } : subquery,
+      ),
+    }));
+    this.markDirty();
+  }
+
+  updateSubqueryAlias(subqueryId: string, alias: string): void {
+    const nextAlias = createSafeSqlAlias(alias);
+
+    if (!nextAlias) {
+      return;
+    }
+
+    this.reportSignal.update((report) => ({
+      ...report,
+      subqueries: report.subqueries.map((subquery) =>
+        subquery.id === subqueryId ? { ...subquery, alias: nextAlias } : subquery,
+      ),
+    }));
+    this.markDirty();
+  }
+
+  removeSubquery(subqueryId: string): void {
+    const tableId = createSubqueryTableId(subqueryId);
+
+    this.reportSignal.update((report) => ({
+      ...report,
+      query: removeTableFromQuery(report.query, tableId, this.fieldLookup()),
+      subqueries: report.subqueries
+        .filter((subquery) => subquery.id !== subqueryId)
+        .map((subquery) => ({
+          ...subquery,
+          query: removeTableFromQuery(subquery.query, tableId, this.fieldLookup()),
+        })),
+    }));
+
+    if (this.activeQueryId() === subqueryId) {
+      this.activeQueryIdSignal.set('main');
+      this.clearCanvasSelection();
+    }
+
+    this.markDirty();
+  }
+
+  subqueryTableId(subqueryId: string): string {
+    return createSubqueryTableId(subqueryId);
+  }
+
+  canUseTableAsSource(tableId: string): boolean {
+    return this.tableLookup().has(tableId) && !this.wouldCreateSubqueryDependencyCycle(tableId);
+  }
+
+  hasSubqueryDependencyCycle(subqueryId: string): boolean {
+    return dependsOnSubquery(this.report(), subqueryId, subqueryId);
+  }
+
   setSearchTerm(value: string): void {
     this.searchTermSignal.set(value);
   }
@@ -259,7 +476,7 @@ export class QueryEditorStore {
   selectTable(tableId: string): void {
     const table = this.tableLookup().get(tableId);
 
-    if (!table) {
+    if (!table || !this.canUseTableAsSource(tableId)) {
       return;
     }
 
@@ -273,7 +490,7 @@ export class QueryEditorStore {
     tableId: string,
     position: Pick<QueryCanvasTablePosition, 'x' | 'y'>,
   ): void {
-    if (!this.tableLookup().has(tableId)) {
+    if (!this.canUseTableAsSource(tableId)) {
       return;
     }
 
@@ -286,7 +503,7 @@ export class QueryEditorStore {
   selectCanvasTable(tableId: string): void {
     const table = this.tableLookup().get(tableId);
 
-    if (!table || !this.report().query.sourceTableIds.includes(tableId)) {
+    if (!table || !this.activeQuery().sourceTableIds.includes(tableId)) {
       return;
     }
 
@@ -297,7 +514,7 @@ export class QueryEditorStore {
   selectCanvasField(fieldId: string): void {
     const field = this.fieldLookup().get(fieldId);
 
-    if (!field || !this.report().query.sourceTableIds.includes(field.tableId)) {
+    if (!field || !this.activeQuery().sourceTableIds.includes(field.tableId)) {
       return;
     }
 
@@ -306,7 +523,7 @@ export class QueryEditorStore {
   }
 
   selectCanvasJoin(joinId: string): void {
-    if (!this.report().query.joins.some((join) => join.id === joinId)) {
+    if (!this.activeQuery().joins.some((join) => join.id === joinId)) {
       return;
     }
 
@@ -322,43 +539,44 @@ export class QueryEditorStore {
       this.canvasSelection(),
       tableId,
       this.fieldLookup(),
-      this.report().query.joins,
+      this.activeQuery().joins,
     );
 
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        sourceTableIds: report.query.sourceTableIds.filter(
-          (sourceTableId) => sourceTableId !== tableId,
+    const activeQueryId = this.activeQueryId();
+
+    this.reportSignal.update((report) => {
+      const nextReport = updateReportQuery(report, activeQueryId, (query) =>
+        removeTableFromQuery(query, tableId, this.fieldLookup()),
+      );
+
+      if (activeQueryId !== 'main') {
+        return nextReport;
+      }
+
+      const crosstabFieldIds = new Set(
+        createCrosstabOutputFields(nextReport.query.columns, this.fieldLookup()).map(
+          (field) => field.id,
         ),
-        columns: report.query.columns.filter(
-          (column) => this.fieldLookup().get(column.fieldId)?.tableId !== tableId,
-        ),
-        filters: report.query.filters.filter(
-          (filter) => this.fieldLookup().get(filter.fieldId)?.tableId !== tableId,
-        ),
-        joins: report.query.joins.filter(
-          (join) => !joinTouchesTable(join, tableId, this.fieldLookup()),
-        ),
-        layout: {
-          ...report.query.layout,
-          tables: report.query.layout.tables.filter((position) => position.tableId !== tableId),
+      );
+
+      return {
+        ...nextReport,
+        crosstab: {
+          ...nextReport.crosstab,
+          rowFieldIds: normalizeCrosstabFieldIds(
+            nextReport.crosstab.rowFieldIds,
+            nextReport.query.columns,
+          ).filter((fieldId) => crosstabFieldIds.has(fieldId)),
+          columnFieldIds: normalizeCrosstabFieldIds(
+            nextReport.crosstab.columnFieldIds,
+            nextReport.query.columns,
+          ).filter((fieldId) => crosstabFieldIds.has(fieldId)),
+          values: nextReport.crosstab.values.filter((value) =>
+            crosstabFieldIds.has(normalizeCrosstabFieldId(value.fieldId, nextReport.query.columns)),
+          ),
         },
-      },
-      crosstab: {
-        ...report.crosstab,
-        rowFieldIds: report.crosstab.rowFieldIds.filter(
-          (fieldId) => this.fieldLookup().get(fieldId)?.tableId !== tableId,
-        ),
-        columnFieldIds: report.crosstab.columnFieldIds.filter(
-          (fieldId) => this.fieldLookup().get(fieldId)?.tableId !== tableId,
-        ),
-        values: report.crosstab.values.filter(
-          (value) => this.fieldLookup().get(value.fieldId)?.tableId !== tableId,
-        ),
-      },
-    }));
+      };
+    });
     if (shouldClearSelection) {
       this.clearCanvasSelection();
     }
@@ -368,18 +586,19 @@ export class QueryEditorStore {
   addColumn(fieldId: string): void {
     const field = this.fieldLookup().get(fieldId);
 
-    if (!field || this.report().query.columns.some((column) => column.fieldId === fieldId)) {
+    if (
+      !field ||
+      !this.canUseTableAsSource(field.tableId) ||
+      this.activeQuery().columns.some((column) => column.fieldId === fieldId)
+    ) {
       return;
     }
 
     this.ensureSourceTable(field.tableId);
 
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        columns: [...report.query.columns, this.createColumnFromField(field)],
-      },
+    this.updateActiveQuery((query) => ({
+      ...query,
+      columns: [...query.columns, this.createColumnFromField(field)],
     }));
     this.markDirty();
   }
@@ -387,50 +606,41 @@ export class QueryEditorStore {
   addColumnsForTable(tableId: string): void {
     const table = this.tableLookup().get(tableId);
 
-    if (!table) {
+    if (!table || !this.canUseTableAsSource(tableId)) {
       return;
     }
 
     this.ensureSourceTable(tableId);
-    this.reportSignal.update((report) => {
-      const selectedFieldIds = new Set(report.query.columns.map((column) => column.fieldId));
+    this.updateActiveQuery((query) => {
+      const selectedFieldIds = new Set(query.columns.map((column) => column.fieldId));
       const columnsToAdd = table.fields
         .filter((field) => !selectedFieldIds.has(field.id))
         .map((field) => this.createColumnFromField(field));
 
       if (columnsToAdd.length === 0) {
-        return report;
+        return query;
       }
 
       return {
-        ...report,
-        query: {
-          ...report.query,
-          columns: [...report.query.columns, ...columnsToAdd],
-        },
+        ...query,
+        columns: [...query.columns, ...columnsToAdd],
       };
     });
     this.markDirty();
   }
 
   removeColumn(columnId: string): void {
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        columns: report.query.columns.filter((column) => column.id !== columnId),
-      },
+    this.updateActiveQuery((query) => ({
+      ...query,
+      columns: query.columns.filter((column) => column.id !== columnId),
     }));
     this.markDirty();
   }
 
   removeColumnByFieldId(fieldId: string): void {
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        columns: report.query.columns.filter((column) => column.fieldId !== fieldId),
-      },
+    this.updateActiveQuery((query) => ({
+      ...query,
+      columns: query.columns.filter((column) => column.fieldId !== fieldId),
     }));
     this.markDirty();
   }
@@ -439,7 +649,7 @@ export class QueryEditorStore {
     tableId: string,
     position: Pick<QueryCanvasTablePosition, 'x' | 'y'>,
   ): void {
-    if (!this.report().query.sourceTableIds.includes(tableId)) {
+    if (!this.activeQuery().sourceTableIds.includes(tableId)) {
       return;
     }
 
@@ -450,8 +660,8 @@ export class QueryEditorStore {
     };
     let changed = false;
 
-    this.reportSignal.update((report) => {
-      const currentPosition = report.query.layout.tables.find(
+    this.updateActiveQuery((query) => {
+      const currentPosition = query.layout.tables.find(
         (tablePosition) => tablePosition.tableId === tableId,
       );
 
@@ -460,23 +670,20 @@ export class QueryEditorStore {
         currentPosition.x === nextPosition.x &&
         currentPosition.y === nextPosition.y
       ) {
-        return report;
+        return query;
       }
 
       changed = true;
 
       return {
-        ...report,
-        query: {
-          ...report.query,
-          layout: {
-            ...report.query.layout,
-            tables: currentPosition
-              ? report.query.layout.tables.map((tablePosition) =>
-                  tablePosition.tableId === tableId ? nextPosition : tablePosition,
-                )
-              : [...report.query.layout.tables, nextPosition],
-          },
+        ...query,
+        layout: {
+          ...query.layout,
+          tables: currentPosition
+            ? query.layout.tables.map((tablePosition) =>
+                tablePosition.tableId === tableId ? nextPosition : tablePosition,
+              )
+            : [...query.layout.tables, nextPosition],
         },
       };
     });
@@ -494,7 +701,7 @@ export class QueryEditorStore {
     return this.joinGraph.assessJoinDrop(
       fromFieldId,
       toFieldId,
-      this.report().query.joins,
+      this.activeQuery().joins,
       this.fieldLookup(),
     );
   }
@@ -508,7 +715,13 @@ export class QueryEditorStore {
     const fromField = this.fieldLookup().get(fromFieldId);
     const toField = this.fieldLookup().get(toFieldId);
 
-    if (!assessment.canDrop || !fromField || !toField) {
+    if (
+      !assessment.canDrop ||
+      !fromField ||
+      !toField ||
+      !this.canUseTableAsSource(fromField.tableId) ||
+      !this.canUseTableAsSource(toField.tableId)
+    ) {
       return null;
     }
 
@@ -518,9 +731,9 @@ export class QueryEditorStore {
     let addedJoinId = '';
     let changedJoinId = '';
 
-    this.reportSignal.update((report) => {
+    this.updateActiveQuery((query) => {
       const existingJoin = assessment.targetJoinId
-        ? report.query.joins.find((join) => join.id === assessment.targetJoinId)
+        ? query.joins.find((join) => join.id === assessment.targetJoinId)
         : null;
 
       if (assessment.mode === 'condition' && existingJoin) {
@@ -532,30 +745,27 @@ export class QueryEditorStore {
         );
 
         if (!conditionCandidate) {
-          return report;
+          return query;
         }
 
         changedJoinId = existingJoin.id;
 
         return {
-          ...report,
-          query: {
-            ...report.query,
-            joins: report.query.joins.map((join) =>
-              join.id === existingJoin.id
-                ? {
-                    ...join,
-                    conditions: [
-                      ...join.conditions,
-                      {
-                        id: this.createId('join-condition'),
-                        ...conditionCandidate,
-                      },
-                    ],
-                  }
-                : join,
-            ),
-          },
+          ...query,
+          joins: query.joins.map((join) =>
+            join.id === existingJoin.id
+              ? {
+                  ...join,
+                  conditions: [
+                    ...join.conditions,
+                    {
+                      id: this.createId('join-condition'),
+                      ...conditionCandidate,
+                    },
+                  ],
+                }
+              : join,
+          ),
         };
       }
 
@@ -563,25 +773,22 @@ export class QueryEditorStore {
       changedJoinId = addedJoinId;
 
       return {
-        ...report,
-        query: {
-          ...report.query,
-          joins: [
-            ...report.query.joins,
-            {
-              id: addedJoinId,
-              type,
-              conditions: [
-                {
-                  id: this.createId('join-condition'),
-                  fromFieldId,
-                  operator: 'equals',
-                  toFieldId,
-                },
-              ],
-            },
-          ],
-        },
+        ...query,
+        joins: [
+          ...query.joins,
+          {
+            id: addedJoinId,
+            type,
+            conditions: [
+              {
+                id: this.createId('join-condition'),
+                fromFieldId,
+                operator: 'equals',
+                toFieldId,
+              },
+            ],
+          },
+        ],
       };
     });
 
@@ -596,19 +803,16 @@ export class QueryEditorStore {
   removeJoin(joinId: string): void {
     let removed = false;
 
-    this.reportSignal.update((report) => {
-      const joins = report.query.joins.filter((join) => join.id !== joinId);
-      removed = joins.length !== report.query.joins.length;
+    this.updateActiveQuery((query) => {
+      const joins = query.joins.filter((join) => join.id !== joinId);
+      removed = joins.length !== query.joins.length;
 
       return removed
         ? {
-            ...report,
-            query: {
-              ...report.query,
-              joins,
-            },
+            ...query,
+            joins,
           }
-        : report;
+        : query;
     });
 
     if (removed) {
@@ -624,20 +828,17 @@ export class QueryEditorStore {
   updateJoinType(joinId: string, type: QueryJoinType): void {
     let updated = false;
 
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        joins: report.query.joins.map((join) => {
-          if (join.id !== joinId || join.type === type) {
-            return join;
-          }
+    this.updateActiveQuery((query) => ({
+      ...query,
+      joins: query.joins.map((join) => {
+        if (join.id !== joinId || join.type === type) {
+          return join;
+        }
 
-          updated = true;
+        updated = true;
 
-          return { ...join, type };
-        }),
-      },
+        return { ...join, type };
+      }),
     }));
 
     if (updated) {
@@ -646,7 +847,7 @@ export class QueryEditorStore {
   }
 
   addJoinCondition(joinId: string): void {
-    const join = this.report().query.joins.find((currentJoin) => currentJoin.id === joinId);
+    const join = this.activeQuery().joins.find((currentJoin) => currentJoin.id === joinId);
     const candidate = join
       ? this.joinGraph.findSuggestedJoinCondition(join, this.tableLookup(), this.fieldLookup())
       : null;
@@ -661,23 +862,20 @@ export class QueryEditorStore {
     };
     let added = false;
 
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        joins: report.query.joins.map((currentJoin) => {
-          if (currentJoin.id !== joinId) {
-            return currentJoin;
-          }
+    this.updateActiveQuery((query) => ({
+      ...query,
+      joins: query.joins.map((currentJoin) => {
+        if (currentJoin.id !== joinId) {
+          return currentJoin;
+        }
 
-          added = true;
+        added = true;
 
-          return {
-            ...currentJoin,
-            conditions: [...currentJoin.conditions, condition],
-          };
-        }),
-      },
+        return {
+          ...currentJoin,
+          conditions: [...currentJoin.conditions, condition],
+        };
+      }),
     }));
 
     if (added) {
@@ -686,7 +884,7 @@ export class QueryEditorStore {
   }
 
   canAddJoinCondition(joinId: string): boolean {
-    const join = this.report().query.joins.find((currentJoin) => currentJoin.id === joinId);
+    const join = this.activeQuery().joins.find((currentJoin) => currentJoin.id === joinId);
 
     return join
       ? this.joinGraph.findSuggestedJoinCondition(join, this.tableLookup(), this.fieldLookup()) !==
@@ -695,7 +893,7 @@ export class QueryEditorStore {
   }
 
   suggestedJoinConditionLabel(joinId: string): string {
-    const join = this.report().query.joins.find((currentJoin) => currentJoin.id === joinId);
+    const join = this.activeQuery().joins.find((currentJoin) => currentJoin.id === joinId);
     const candidate = join
       ? this.joinGraph.findSuggestedJoinCondition(join, this.tableLookup(), this.fieldLookup())
       : null;
@@ -708,21 +906,18 @@ export class QueryEditorStore {
   removeJoinCondition(joinId: string, conditionId: string): void {
     let removed = false;
 
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        joins: report.query.joins.map((join) => {
-          if (join.id !== joinId || join.conditions.length <= 1) {
-            return join;
-          }
+    this.updateActiveQuery((query) => ({
+      ...query,
+      joins: query.joins.map((join) => {
+        if (join.id !== joinId || join.conditions.length <= 1) {
+          return join;
+        }
 
-          const conditions = join.conditions.filter((condition) => condition.id !== conditionId);
-          removed = conditions.length !== join.conditions.length;
+        const conditions = join.conditions.filter((condition) => condition.id !== conditionId);
+        removed = conditions.length !== join.conditions.length;
 
-          return removed ? { ...join, conditions } : join;
-        }),
-      },
+        return removed ? { ...join, conditions } : join;
+      }),
     }));
 
     if (removed) {
@@ -763,14 +958,11 @@ export class QueryEditorStore {
   }
 
   removeColumnsForTable(tableId: string): void {
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        columns: report.query.columns.filter(
-          (column) => this.fieldLookup().get(column.fieldId)?.tableId !== tableId,
-        ),
-      },
+    this.updateActiveQuery((query) => ({
+      ...query,
+      columns: query.columns.filter(
+        (column) => this.fieldLookup().get(column.fieldId)?.tableId !== tableId,
+      ),
     }));
     this.markDirty();
   }
@@ -796,7 +988,7 @@ export class QueryEditorStore {
   }
 
   updateColumnOrCriteria(columnId: string, index: number, criteria: string): void {
-    const column = this.report().query.columns.find(
+    const column = this.activeQuery().columns.find(
       (currentColumn) => currentColumn.id === columnId,
     );
     const values = [...(column?.orCriteria ?? [])];
@@ -805,7 +997,7 @@ export class QueryEditorStore {
   }
 
   moveColumn(columnId: string, direction: -1 | 1): void {
-    const columns = [...this.report().query.columns];
+    const columns = [...this.activeQuery().columns];
     const currentIndex = columns.findIndex((column) => column.id === columnId);
     const nextIndex = currentIndex + direction;
 
@@ -819,12 +1011,9 @@ export class QueryEditorStore {
     }
 
     columns.splice(nextIndex, 0, column);
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        columns,
-      },
+    this.updateActiveQuery((query) => ({
+      ...query,
+      columns,
     }));
     this.markDirty();
   }
@@ -832,26 +1021,23 @@ export class QueryEditorStore {
   addFilter(fieldId: string): void {
     const field = this.fieldLookup().get(fieldId);
 
-    if (!field) {
+    if (!field || !this.canUseTableAsSource(field.tableId)) {
       return;
     }
 
     this.ensureSourceTable(field.tableId);
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        filters: [
-          ...report.query.filters,
-          {
-            id: this.createId('filter'),
-            fieldId,
-            operator: field.type === 'string' ? 'contains' : 'equals',
-            value: '',
-            parameterName: '',
-          },
-        ],
-      },
+    this.updateActiveQuery((query) => ({
+      ...query,
+      filters: [
+        ...query.filters,
+        {
+          id: this.createId('filter'),
+          fieldId,
+          operator: field.type === 'string' ? 'contains' : 'equals',
+          value: '',
+          parameterName: '',
+        },
+      ],
     }));
     this.markDirty();
   }
@@ -865,16 +1051,127 @@ export class QueryEditorStore {
   }
 
   updateFilterParameter(filterId: string, parameterName: string): void {
-    this.updateFilter(filterId, { parameterName });
+    this.updateFilter(filterId, { parameterName: normalizeParameterName(parameterName) });
   }
 
   removeFilter(filterId: string): void {
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        filters: report.query.filters.filter((filter) => filter.id !== filterId),
-      },
+    this.updateActiveQuery((query) => ({
+      ...query,
+      filters: query.filters.filter((filter) => filter.id !== filterId),
+    }));
+    this.markDirty();
+  }
+
+  addParameterForFilter(filterId: string): void {
+    const filter = this.activeQuery().filters.find(
+      (currentFilter) => currentFilter.id === filterId,
+    );
+    const field = filter ? this.fieldLookup().get(filter.fieldId) : null;
+
+    if (!filter || !field) {
+      return;
+    }
+
+    const parameterName = createUniqueParameterName(
+      createParameterNameFromField(field),
+      this.activeQuery().parameters,
+    );
+    const parameter: QueryParameter = {
+      id: this.createId('parameter'),
+      name: parameterName,
+      label: field.label,
+      type: field.type,
+      required: true,
+      defaultValue: filter.value || defaultParameterValue(field.type),
+    };
+
+    this.updateActiveQuery((query) => ({
+      ...query,
+      filters: query.filters.map((currentFilter) =>
+        currentFilter.id === filterId
+          ? { ...currentFilter, parameterName: parameter.name }
+          : currentFilter,
+      ),
+      parameters: [...query.parameters, parameter],
+    }));
+    this.markDirty();
+  }
+
+  addParameter(): void {
+    const parameterName = createUniqueParameterName('Parameter', this.activeQuery().parameters);
+    const parameter: QueryParameter = {
+      id: this.createId('parameter'),
+      name: parameterName,
+      label: 'New parameter',
+      type: 'string',
+      required: false,
+      defaultValue: '',
+    };
+
+    this.updateActiveQuery((query) => ({
+      ...query,
+      parameters: [...query.parameters, parameter],
+    }));
+    this.markDirty();
+  }
+
+  updateParameterName(parameterId: string, name: string): void {
+    const parameter = this.activeQuery().parameters.find(
+      (currentParameter) => currentParameter.id === parameterId,
+    );
+    const nextName = normalizeParameterName(name);
+
+    if (!parameter || parameter.name === nextName) {
+      return;
+    }
+
+    this.updateActiveQuery((query) => ({
+      ...query,
+      filters: query.filters.map((filter) =>
+        filter.parameterName === parameter.name ? { ...filter, parameterName: nextName } : filter,
+      ),
+      parameters: query.parameters.map((currentParameter) =>
+        currentParameter.id === parameterId
+          ? { ...currentParameter, name: nextName }
+          : currentParameter,
+      ),
+    }));
+    this.markDirty();
+  }
+
+  updateParameterLabel(parameterId: string, label: string): void {
+    this.updateParameter(parameterId, { label });
+  }
+
+  updateParameterType(parameterId: string, type: FieldType): void {
+    this.updateParameter(parameterId, { type });
+  }
+
+  updateParameterRequired(parameterId: string, required: boolean): void {
+    this.updateParameter(parameterId, { required });
+  }
+
+  updateParameterDefaultValue(parameterId: string, defaultValue: string): void {
+    this.updateParameter(parameterId, { defaultValue });
+  }
+
+  removeParameter(parameterId: string): void {
+    const parameter = this.activeQuery().parameters.find(
+      (currentParameter) => currentParameter.id === parameterId,
+    );
+
+    if (!parameter) {
+      return;
+    }
+
+    this.updateActiveQuery((query) => ({
+      ...query,
+      filters: query.filters.map((filter) =>
+        filter.parameterName === parameter.name ? { ...filter, parameterName: '' } : filter,
+      ),
+      parameters: query.parameters.filter(
+        (currentParameter) => currentParameter.id !== parameterId,
+      ),
     }));
     this.markDirty();
   }
@@ -888,13 +1185,17 @@ export class QueryEditorStore {
   }
 
   addCrosstabValue(fieldId: string, aggregation: CrosstabAggregation): void {
-    const field = this.fieldLookup().get(fieldId);
+    const field = this.crosstabFieldLookup().get(fieldId);
+    const values = this.crosstabDefinition().values;
 
-    if (!field) {
+    if (
+      !field ||
+      !field.aggregations.includes(aggregation) ||
+      values.some((value) => value.fieldId === fieldId && value.aggregation === aggregation)
+    ) {
       return;
     }
 
-    this.ensureSourceTable(field.tableId);
     this.reportSignal.update((report) => ({
       ...report,
       crosstab: {
@@ -927,6 +1228,40 @@ export class QueryEditorStore {
       crosstab: {
         ...report.crosstab,
         values: report.crosstab.values.filter((value) => value.id !== valueId),
+      },
+    }));
+    this.markDirty();
+  }
+
+  moveCrosstabRow(fieldId: string, direction: -1 | 1): void {
+    this.moveCrosstabField('rowFieldIds', fieldId, direction);
+  }
+
+  moveCrosstabColumn(fieldId: string, direction: -1 | 1): void {
+    this.moveCrosstabField('columnFieldIds', fieldId, direction);
+  }
+
+  moveCrosstabValue(valueId: string, direction: -1 | 1): void {
+    const values = [...this.crosstabDefinition().values];
+    const currentIndex = values.findIndex((value) => value.id === valueId);
+    const nextIndex = currentIndex + direction;
+
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= values.length) {
+      return;
+    }
+
+    const [value] = values.splice(currentIndex, 1);
+
+    if (!value) {
+      return;
+    }
+
+    values.splice(nextIndex, 0, value);
+    this.reportSignal.update((report) => ({
+      ...report,
+      crosstab: {
+        ...report.crosstab,
+        values,
       },
     }));
     this.markDirty();
@@ -993,29 +1328,39 @@ export class QueryEditorStore {
   }
 
   private updateColumn(columnId: string, patch: Partial<QueryColumn>): void {
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        columns: report.query.columns.map((column) =>
-          column.id === columnId ? { ...column, ...patch } : column,
-        ),
-      },
+    this.updateActiveQuery((query) => ({
+      ...query,
+      columns: query.columns.map((column) =>
+        column.id === columnId ? { ...column, ...patch } : column,
+      ),
     }));
     this.markDirty();
   }
 
   private updateFilter(filterId: string, patch: Partial<QueryFilter>): void {
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        filters: report.query.filters.map((filter) =>
-          filter.id === filterId ? { ...filter, ...patch } : filter,
-        ),
-      },
+    this.updateActiveQuery((query) => ({
+      ...query,
+      filters: query.filters.map((filter) =>
+        filter.id === filterId ? { ...filter, ...patch } : filter,
+      ),
     }));
     this.markDirty();
+  }
+
+  private updateParameter(parameterId: string, patch: Partial<QueryParameter>): void {
+    this.updateActiveQuery((query) => ({
+      ...query,
+      parameters: query.parameters.map((parameter) =>
+        parameter.id === parameterId ? { ...parameter, ...patch } : parameter,
+      ),
+    }));
+    this.markDirty();
+  }
+
+  private updateActiveQuery(updater: (query: QueryDocument) => QueryDocument): void {
+    const activeQueryId = this.activeQueryId();
+
+    this.reportSignal.update((report) => updateReportQuery(report, activeQueryId, updater));
   }
 
   private updateJoinCondition(
@@ -1025,35 +1370,32 @@ export class QueryEditorStore {
   ): void {
     let updated = false;
 
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        joins: report.query.joins.map((join) => {
-          if (join.id !== joinId) {
-            return join;
-          }
+    this.updateActiveQuery((query) => ({
+      ...query,
+      joins: query.joins.map((join) => {
+        if (join.id !== joinId) {
+          return join;
+        }
 
-          return {
-            ...join,
-            conditions: join.conditions.map((condition) => {
-              if (condition.id !== conditionId) {
-                return condition;
-              }
+        return {
+          ...join,
+          conditions: join.conditions.map((condition) => {
+            if (condition.id !== conditionId) {
+              return condition;
+            }
 
-              const nextCondition = { ...condition, ...patch };
+            const nextCondition = { ...condition, ...patch };
 
-              if (areJoinConditionsEqual(condition, nextCondition)) {
-                return condition;
-              }
+            if (areJoinConditionsEqual(condition, nextCondition)) {
+              return condition;
+            }
 
-              updated = true;
+            updated = true;
 
-              return nextCondition;
-            }),
-          };
-        }),
-      },
+            return nextCondition;
+          }),
+        };
+      }),
     }));
 
     if (updated) {
@@ -1063,20 +1405,22 @@ export class QueryEditorStore {
 
   private findJoinCondition(joinId: string, conditionId: string): QueryJoinCondition | null {
     return (
-      this.report()
-        .query.joins.find((join) => join.id === joinId)
+      this.activeQuery()
+        .joins.find((join) => join.id === joinId)
         ?.conditions.find((condition) => condition.id === conditionId) ?? null
     );
   }
 
   private addCrosstabField(target: 'rowFieldIds' | 'columnFieldIds', fieldId: string): void {
-    const field = this.fieldLookup().get(fieldId);
+    const field = this.crosstabFieldLookup().get(fieldId);
+    const selectedFieldIds = new Set(
+      normalizeCrosstabFieldIds(this.report().crosstab[target], this.report().query.columns),
+    );
 
-    if (!field || this.report().crosstab[target].includes(fieldId)) {
+    if (!field || selectedFieldIds.has(fieldId)) {
       return;
     }
 
-    this.ensureSourceTable(field.tableId);
     this.reportSignal.update((report) => ({
       ...report,
       crosstab: {
@@ -1088,30 +1432,84 @@ export class QueryEditorStore {
   }
 
   private removeCrosstabField(target: 'rowFieldIds' | 'columnFieldIds', fieldId: string): void {
+    const equivalentFieldIds = createCrosstabEquivalentFieldIds(
+      fieldId,
+      this.report().query.columns,
+    );
+
     this.reportSignal.update((report) => ({
       ...report,
       crosstab: {
         ...report.crosstab,
-        [target]: report.crosstab[target].filter((currentFieldId) => currentFieldId !== fieldId),
+        [target]: report.crosstab[target].filter(
+          (currentFieldId) => !equivalentFieldIds.has(currentFieldId),
+        ),
+      },
+    }));
+    this.markDirty();
+  }
+
+  private moveCrosstabField(
+    target: 'rowFieldIds' | 'columnFieldIds',
+    fieldId: string,
+    direction: -1 | 1,
+  ): void {
+    const fieldIds = [
+      ...normalizeCrosstabFieldIds(this.report().crosstab[target], this.report().query.columns),
+    ];
+    const currentIndex = fieldIds.indexOf(fieldId);
+    const nextIndex = currentIndex + direction;
+
+    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= fieldIds.length) {
+      return;
+    }
+
+    const [currentFieldId] = fieldIds.splice(currentIndex, 1);
+
+    if (!currentFieldId) {
+      return;
+    }
+
+    fieldIds.splice(nextIndex, 0, currentFieldId);
+    this.reportSignal.update((report) => ({
+      ...report,
+      crosstab: {
+        ...report.crosstab,
+        [target]: fieldIds,
       },
     }));
     this.markDirty();
   }
 
   private ensureSourceTable(tableId: string): boolean {
-    if (this.report().query.sourceTableIds.includes(tableId)) {
+    if (!this.canUseTableAsSource(tableId)) {
       return false;
     }
 
-    this.reportSignal.update((report) => ({
-      ...report,
-      query: {
-        ...report.query,
-        sourceTableIds: [...report.query.sourceTableIds, tableId],
-      },
+    if (this.activeQuery().sourceTableIds.includes(tableId)) {
+      return false;
+    }
+
+    this.updateActiveQuery((query) => ({
+      ...query,
+      sourceTableIds: [...query.sourceTableIds, tableId],
     }));
 
     return true;
+  }
+
+  private wouldCreateSubqueryDependencyCycle(tableId: string): boolean {
+    const activeQueryId = this.activeQueryId();
+    const candidateSubqueryId = parseSubqueryTableId(tableId);
+
+    if (activeQueryId === 'main' || !candidateSubqueryId) {
+      return false;
+    }
+
+    return (
+      candidateSubqueryId === activeQueryId ||
+      dependsOnSubquery(this.report(), candidateSubqueryId, activeQueryId)
+    );
   }
 
   private createId(prefix: string): string {
@@ -1179,27 +1577,249 @@ function filterMetadata(
   return filteredGroups;
 }
 
+function createSubqueryTable(
+  subquery: QuerySubquery,
+  baseFieldLookup: ReadonlyMap<string, DataSourceField>,
+): DataSourceTable {
+  const tableId = createSubqueryTableId(subquery.id);
+  const fields = subquery.query.columns
+    .filter((column) => column.visible)
+    .map((column, index) => {
+      const sourceField = baseFieldLookup.get(column.fieldId);
+      const fieldName = createSafeSqlAlias(
+        column.alias || sourceField?.name || `Column${index + 1}`,
+      );
+
+      return {
+        id: `${tableId}.${fieldName}`,
+        tableId,
+        name: fieldName,
+        label: column.alias || sourceField?.label || fieldName,
+        expression: `${subquery.alias}.${fieldName}`,
+        type: sourceField?.type ?? 'string',
+        nullable: sourceField?.nullable ?? true,
+        aggregations: sourceField?.aggregations ?? (['count'] as const),
+      };
+    });
+
+  return {
+    id: tableId,
+    schema: 'subquery',
+    name: subquery.name,
+    alias: subquery.alias,
+    label: subquery.name,
+    sourceType: 'subquery',
+    subqueryId: subquery.id,
+    fields,
+  };
+}
+
+function createSubqueryTableId(subqueryId: string): string {
+  return `subquery:${subqueryId}`;
+}
+
+function parseSubqueryTableId(tableId: string): string | null {
+  return tableId.startsWith('subquery:') ? tableId.slice('subquery:'.length) : null;
+}
+
+function dependsOnSubquery(
+  report: ReportDefinition,
+  sourceSubqueryId: string,
+  targetSubqueryId: string,
+  visitedSubqueryIds: ReadonlySet<string> = new Set(),
+): boolean {
+  if (visitedSubqueryIds.has(sourceSubqueryId)) {
+    return false;
+  }
+
+  const sourceSubquery = report.subqueries.find((subquery) => subquery.id === sourceSubqueryId);
+
+  if (!sourceSubquery) {
+    return false;
+  }
+
+  const nextVisitedSubqueryIds = new Set(visitedSubqueryIds);
+  nextVisitedSubqueryIds.add(sourceSubqueryId);
+
+  return sourceSubquery.query.sourceTableIds.some((tableId) => {
+    const dependencySubqueryId = parseSubqueryTableId(tableId);
+
+    if (!dependencySubqueryId) {
+      return false;
+    }
+
+    return (
+      dependencySubqueryId === targetSubqueryId ||
+      dependsOnSubquery(report, dependencySubqueryId, targetSubqueryId, nextVisitedSubqueryIds)
+    );
+  });
+}
+
+function createPreviewDataRows(
+  rows: readonly DataRecord[],
+  report: ReportDefinition,
+  baseFieldLookup: ReadonlyMap<string, DataSourceField>,
+): readonly DataRecord[] {
+  const previewRows = rows.map((row) => ({ ...row }));
+
+  for (const subquery of report.subqueries) {
+    const tableId = createSubqueryTableId(subquery.id);
+
+    subquery.query.columns
+      .filter((column) => column.visible)
+      .forEach((column, index) => {
+        const sourceField = baseFieldLookup.get(column.fieldId);
+        const fieldName = createSafeSqlAlias(
+          column.alias || sourceField?.name || `Column${index + 1}`,
+        );
+        const subqueryFieldId = `${tableId}.${fieldName}`;
+
+        previewRows.forEach((row) => {
+          row[subqueryFieldId] = row[column.fieldId] ?? null;
+        });
+      });
+  }
+
+  return previewRows;
+}
+
+function createSafeSqlAlias(value: string): string {
+  const normalized = value
+    .trim()
+    .replace(/[^A-Za-z0-9_]/g, '_')
+    .replace(/_+/g, '_');
+  const withoutEdgeUnderscores = normalized.replace(/^_+|_+$/g, '');
+
+  if (!withoutEdgeUnderscores) {
+    return '';
+  }
+
+  return /^[A-Za-z]/.test(withoutEdgeUnderscores)
+    ? withoutEdgeUnderscores
+    : `Alias_${withoutEdgeUnderscores}`;
+}
+
+function updateReportQuery(
+  report: ReportDefinition,
+  activeQueryId: QueryWorkspaceId,
+  updater: (query: QueryDocument) => QueryDocument,
+): ReportDefinition {
+  if (activeQueryId === 'main') {
+    return {
+      ...report,
+      query: updater(report.query),
+    };
+  }
+
+  return {
+    ...report,
+    subqueries: report.subqueries.map((subquery) =>
+      subquery.id === activeQueryId ? { ...subquery, query: updater(subquery.query) } : subquery,
+    ),
+  };
+}
+
+function removeTableFromQuery(
+  query: QueryDocument,
+  tableId: string,
+  fieldLookup: ReadonlyMap<string, DataSourceField>,
+): QueryDocument {
+  return {
+    ...query,
+    sourceTableIds: query.sourceTableIds.filter((sourceTableId) => sourceTableId !== tableId),
+    columns: query.columns.filter((column) => fieldLookup.get(column.fieldId)?.tableId !== tableId),
+    filters: query.filters.filter((filter) => fieldLookup.get(filter.fieldId)?.tableId !== tableId),
+    joins: query.joins.filter((join) => !joinTouchesTable(join, tableId, fieldLookup)),
+    layout: {
+      ...query.layout,
+      tables: query.layout.tables.filter((position) => position.tableId !== tableId),
+    },
+  };
+}
+
+function normalizeParameterName(name: string): string {
+  return name.trim().replace(/^@+/, '').replace(/\s+/g, '_');
+}
+
+function createParameterNameFromField(field: DataSourceField): string {
+  const baseName = normalizeParameterName(field.name || field.label).replace(/[^A-Za-z0-9_]/g, '_');
+  const safeName = /^[A-Za-z]/.test(baseName) ? baseName : `Parameter_${baseName}`;
+
+  return safeName.replace(/_+/g, '_').replace(/_$/g, '') || 'Parameter';
+}
+
+function createUniqueParameterName(
+  preferredName: string,
+  parameters: readonly QueryParameter[],
+): string {
+  const normalizedName = createSafeParameterName(preferredName);
+  const usedNames = new Set(parameters.map((parameter) => parameter.name.toLowerCase()));
+
+  if (!usedNames.has(normalizedName.toLowerCase())) {
+    return normalizedName;
+  }
+
+  let sequence = 2;
+  let candidate = `${normalizedName}${sequence}`;
+
+  while (usedNames.has(candidate.toLowerCase())) {
+    sequence += 1;
+    candidate = `${normalizedName}${sequence}`;
+  }
+
+  return candidate;
+}
+
+function createSafeParameterName(name: string): string {
+  const normalizedName = normalizeParameterName(name).replace(/[^A-Za-z0-9_]/g, '_');
+  const safeName = /^[A-Za-z]/.test(normalizedName)
+    ? normalizedName
+    : `Parameter_${normalizedName}`;
+
+  return safeName.replace(/_+/g, '_').replace(/_$/g, '') || 'Parameter';
+}
+
+function defaultParameterValue(type: FieldType): string {
+  switch (type) {
+    case 'number':
+      return '0';
+    case 'boolean':
+      return 'true';
+    case 'date':
+      return '';
+    case 'string':
+      return '';
+  }
+}
+
 function applyPromptFilters(
   rows: readonly DataRecord[],
   filters: readonly QueryFilter[],
+  parameters: readonly QueryParameter[],
 ): readonly DataRecord[] {
+  const parameterLookup = new Map(parameters.map((parameter) => [parameter.name, parameter]));
+
   return rows.filter((row) =>
     filters.every((filter) => {
       const value = row[filter.fieldId];
+      const filterValue =
+        filter.operator === 'isEmpty'
+          ? ''
+          : (parameterLookup.get(filter.parameterName)?.defaultValue ?? filter.value);
 
       switch (filter.operator) {
         case 'equals':
-          return String(value ?? '').toLowerCase() === filter.value.toLowerCase();
+          return String(value ?? '').toLowerCase() === filterValue.toLowerCase();
         case 'notEquals':
-          return String(value ?? '').toLowerCase() !== filter.value.toLowerCase();
+          return String(value ?? '').toLowerCase() !== filterValue.toLowerCase();
         case 'contains':
           return String(value ?? '')
             .toLowerCase()
-            .includes(filter.value.toLowerCase());
+            .includes(filterValue.toLowerCase());
         case 'greaterThan':
-          return Number(value) > Number(filter.value);
+          return Number(value) > Number(filterValue);
         case 'lessThan':
-          return Number(value) < Number(filter.value);
+          return Number(value) < Number(filterValue);
         case 'isEmpty':
           return value === null || value === '';
       }
@@ -1347,6 +1967,144 @@ function projectRows(
     id: row.id,
     cells: Object.fromEntries(columns.map((column) => [column.id, row[column.fieldId] ?? null])),
   }));
+}
+
+function createCrosstabOutputFields(
+  columns: readonly QueryColumn[],
+  fieldLookup: ReadonlyMap<string, DataSourceField>,
+): readonly DataSourceField[] {
+  return columns.map((column) => {
+    const sourceField = fieldLookup.get(column.fieldId);
+    const name = createSafeSqlAlias(column.alias || sourceField?.name || column.id);
+
+    return {
+      id: column.id,
+      tableId: 'query-output',
+      name: name || column.id,
+      label: column.alias || sourceField?.label || column.id,
+      expression: column.expression,
+      type: sourceField?.type ?? 'string',
+      nullable: sourceField?.nullable ?? true,
+      aggregations: sourceField?.aggregations ?? (['count'] as const),
+    };
+  });
+}
+
+function normalizeCrosstabDefinition(
+  definition: CrosstabDefinition,
+  columns: readonly QueryColumn[],
+): CrosstabDefinition {
+  return {
+    ...definition,
+    rowFieldIds: normalizeCrosstabFieldIds(definition.rowFieldIds, columns),
+    columnFieldIds: normalizeCrosstabFieldIds(definition.columnFieldIds, columns),
+    values: definition.values.map((value) => ({
+      ...value,
+      fieldId: normalizeCrosstabFieldId(value.fieldId, columns),
+    })),
+  };
+}
+
+function normalizeCrosstabFieldIds(
+  fieldIds: readonly string[],
+  columns: readonly QueryColumn[],
+): readonly string[] {
+  return fieldIds.map((fieldId) => normalizeCrosstabFieldId(fieldId, columns));
+}
+
+function normalizeCrosstabFieldId(fieldId: string, columns: readonly QueryColumn[]): string {
+  return columns.find((column) => column.fieldId === fieldId)?.id ?? fieldId;
+}
+
+function createCrosstabEquivalentFieldIds(
+  fieldId: string,
+  columns: readonly QueryColumn[],
+): ReadonlySet<string> {
+  const fieldIds = new Set<string>([fieldId]);
+  const column = columns.find(
+    (currentColumn) => currentColumn.id === fieldId || currentColumn.fieldId === fieldId,
+  );
+
+  if (column) {
+    fieldIds.add(column.id);
+    fieldIds.add(column.fieldId);
+  }
+
+  return fieldIds;
+}
+
+function createRenderableCrosstabDefinition(
+  definition: CrosstabDefinition,
+  fieldLookup: ReadonlyMap<string, DataSourceField>,
+): CrosstabDefinition {
+  const valueKeys = new Set<string>();
+
+  return {
+    ...definition,
+    rowFieldIds: definition.rowFieldIds.filter((fieldId) => fieldLookup.has(fieldId)),
+    columnFieldIds: definition.columnFieldIds.filter((fieldId) => fieldLookup.has(fieldId)),
+    values: definition.values.filter((value) => {
+      const field = fieldLookup.get(value.fieldId);
+      const valueKey = `${value.fieldId}:${value.aggregation}`;
+
+      if (!field || !field.aggregations.includes(value.aggregation) || valueKeys.has(valueKey)) {
+        return false;
+      }
+
+      valueKeys.add(valueKey);
+
+      return true;
+    }),
+  };
+}
+
+function createCrosstabConfigIssues(
+  definition: CrosstabDefinition,
+  fieldLookup: ReadonlyMap<string, DataSourceField>,
+): readonly string[] {
+  const issues: string[] = [];
+  const valueKeys = new Set<string>();
+
+  if (fieldLookup.size === 0) {
+    issues.push('Add at least one visible Main query column.');
+  }
+
+  if (definition.rowFieldIds.length === 0) {
+    issues.push('Add at least one row field.');
+  }
+
+  if (definition.columnFieldIds.length === 0) {
+    issues.push('Add at least one column field.');
+  }
+
+  if (definition.values.length === 0) {
+    issues.push('Add at least one value.');
+  }
+
+  for (const fieldId of [...definition.rowFieldIds, ...definition.columnFieldIds]) {
+    if (!fieldLookup.has(fieldId)) {
+      issues.push(`${fieldId} is not available in Main query output.`);
+    }
+  }
+
+  for (const value of definition.values) {
+    const field = fieldLookup.get(value.fieldId);
+    const valueKey = `${value.fieldId}:${value.aggregation}`;
+
+    if (!field) {
+      issues.push(`${value.label} is not available in Main query output.`);
+    } else if (!field.aggregations.includes(value.aggregation)) {
+      issues.push(`${value.aggregation.toUpperCase()} is not supported for ${field.label}.`);
+    }
+
+    if (valueKeys.has(valueKey)) {
+      issues.push(`${value.aggregation.toUpperCase()} ${value.label} is duplicated.`);
+    } else {
+      valueKeys.add(valueKey);
+    }
+  }
+
+  return issues;
 }
 
 function createCanvasJoin(
@@ -1522,6 +2280,155 @@ function selectionTouchesTable(
   return false;
 }
 
+function validateActiveQuery(
+  query: QueryDocument,
+  subquery: QuerySubquery | null,
+  report: ReportDefinition,
+  tableLookup: ReadonlyMap<string, DataSourceTable>,
+  fieldLookup: ReadonlyMap<string, DataSourceField>,
+): readonly string[] {
+  const issues = [
+    ...validateQueryDocument(query, subquery?.name ?? 'Main query', tableLookup, fieldLookup, {
+      selfSourceTableId: subquery ? createSubqueryTableId(subquery.id) : '',
+      requireVisibleOutputColumn: subquery !== null,
+    }),
+  ];
+
+  if (subquery && dependsOnSubquery(report, subquery.id, subquery.id)) {
+    issues.push(`${subquery.name}: circular subquery datasource dependency.`);
+  }
+
+  return issues;
+}
+
+function validateQueryDocument(
+  query: QueryDocument,
+  label: string,
+  tableLookup: ReadonlyMap<string, DataSourceTable>,
+  fieldLookup: ReadonlyMap<string, DataSourceField>,
+  options: {
+    readonly selfSourceTableId?: string;
+    readonly requireVisibleOutputColumn?: boolean;
+  } = {},
+): readonly string[] {
+  const issues: string[] = [];
+  const aliases = new Set<string>();
+  const parameterNames = new Set<string>();
+
+  if (query.sourceTableIds.length === 0) {
+    issues.push(`${label}: select at least one datasource table.`);
+  }
+
+  if (query.columns.length === 0) {
+    issues.push(`${label}: add at least one query column.`);
+  }
+
+  if (options.requireVisibleOutputColumn && !query.columns.some((column) => column.visible)) {
+    issues.push(`${label}: select at least one visible output column.`);
+  }
+
+  for (const tableId of query.sourceTableIds) {
+    if (options.selfSourceTableId && tableId === options.selfSourceTableId) {
+      issues.push(`${label}: cannot use itself as a datasource.`);
+    } else if (!tableLookup.has(tableId)) {
+      issues.push(`${label}: datasource ${tableId} is no longer available.`);
+    }
+  }
+
+  for (const column of query.columns) {
+    const field = fieldLookup.get(column.fieldId);
+
+    if (!field) {
+      issues.push(`${label}: column ${column.alias} points to a missing field.`);
+    } else if (!query.sourceTableIds.includes(field.tableId)) {
+      issues.push(`${label}: column ${column.alias} uses an unselected datasource.`);
+    }
+
+    const normalizedAlias = column.alias.trim().toLowerCase();
+
+    if (!normalizedAlias) {
+      issues.push(`${label}: column aliases cannot be empty.`);
+    } else if (aliases.has(normalizedAlias)) {
+      issues.push(`${label}: column alias ${column.alias} is duplicated.`);
+    } else {
+      aliases.add(normalizedAlias);
+    }
+  }
+
+  for (const filter of query.filters) {
+    const field = fieldLookup.get(filter.fieldId);
+
+    if (!field) {
+      issues.push(`${label}: filter ${filter.id} points to a missing field.`);
+    } else if (!query.sourceTableIds.includes(field.tableId)) {
+      issues.push(`${label}: filter on ${field.label} uses an unselected datasource.`);
+    }
+
+    if (filter.parameterName && !/^[A-Za-z][A-Za-z0-9_]*$/.test(filter.parameterName)) {
+      issues.push(
+        `${label}: parameter ${filter.parameterName} must start with a letter and use letters, numbers, or underscores.`,
+      );
+    } else if (
+      filter.parameterName &&
+      !query.parameters.some((parameter) => parameter.name === filter.parameterName)
+    ) {
+      issues.push(
+        `${label}: filter on ${field?.label ?? filter.id} uses a missing prompt parameter.`,
+      );
+    }
+  }
+
+  for (const parameter of query.parameters) {
+    const normalizedName = parameter.name.trim();
+
+    if (!normalizedName) {
+      issues.push(`${label}: prompt parameter names cannot be empty.`);
+    } else if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(normalizedName)) {
+      issues.push(
+        `${label}: parameter ${parameter.name} must start with a letter and use letters, numbers, or underscores.`,
+      );
+    } else if (parameterNames.has(normalizedName.toLowerCase())) {
+      issues.push(`${label}: parameter ${parameter.name} is duplicated.`);
+    } else {
+      parameterNames.add(normalizedName.toLowerCase());
+    }
+
+    if (!parameter.label.trim()) {
+      issues.push(`${label}: parameter ${parameter.name || parameter.id} label cannot be empty.`);
+    }
+  }
+
+  for (const join of query.joins) {
+    if (join.conditions.length === 0) {
+      issues.push(`${label}: join ${join.id} must have at least one condition.`);
+      continue;
+    }
+
+    for (const condition of join.conditions) {
+      const fromField = fieldLookup.get(condition.fromFieldId);
+      const toField = fieldLookup.get(condition.toFieldId);
+
+      if (!fromField || !toField) {
+        issues.push(`${label}: join ${join.id} points to a missing field.`);
+        continue;
+      }
+
+      if (fromField.tableId === toField.tableId) {
+        issues.push(`${label}: join ${join.id} connects fields from the same datasource.`);
+      }
+
+      if (
+        !query.sourceTableIds.includes(fromField.tableId) ||
+        !query.sourceTableIds.includes(toField.tableId)
+      ) {
+        issues.push(`${label}: join ${join.id} uses an unselected datasource.`);
+      }
+    }
+  }
+
+  return issues;
+}
+
 function validateReport(
   report: ReportDefinition,
   tableLookup: ReadonlyMap<string, DataSourceTable>,
@@ -1544,6 +2451,7 @@ function validateReport(
   }
 
   const aliases = new Set<string>();
+  const parameterNames = new Set<string>();
 
   for (const column of report.query.columns) {
     const field = fieldLookup.get(column.fieldId);
@@ -1578,6 +2486,31 @@ function validateReport(
       issues.push(
         `Parameter ${filter.parameterName} must start with a letter and use letters, numbers, or underscores.`,
       );
+    } else if (
+      filter.parameterName &&
+      !report.query.parameters.some((parameter) => parameter.name === filter.parameterName)
+    ) {
+      issues.push(`Filter on ${field?.label ?? filter.id} uses a missing prompt parameter.`);
+    }
+  }
+
+  for (const parameter of report.query.parameters) {
+    const normalizedName = parameter.name.trim();
+
+    if (!normalizedName) {
+      issues.push('Prompt parameter names cannot be empty.');
+    } else if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(normalizedName)) {
+      issues.push(
+        `Parameter ${parameter.name} must start with a letter and use letters, numbers, or underscores.`,
+      );
+    } else if (parameterNames.has(normalizedName.toLowerCase())) {
+      issues.push(`Parameter ${parameter.name} is duplicated.`);
+    } else {
+      parameterNames.add(normalizedName.toLowerCase());
+    }
+
+    if (!parameter.label.trim()) {
+      issues.push(`Parameter ${parameter.name || parameter.id} label cannot be empty.`);
     }
   }
 
@@ -1609,15 +2542,103 @@ function validateReport(
     }
   }
 
-  for (const value of report.crosstab.values) {
-    const field = fieldLookup.get(value.fieldId);
+  const crosstabDefinition = normalizeCrosstabDefinition(report.crosstab, report.query.columns);
+  const crosstabFieldLookup = new Map(
+    createCrosstabOutputFields(report.query.columns, fieldLookup).map(
+      (field) => [field.id, field] as const,
+    ),
+  );
+
+  for (const fieldId of crosstabDefinition.rowFieldIds) {
+    if (!crosstabFieldLookup.has(fieldId)) {
+      issues.push(`Crosstab row field ${fieldId} is not a Main query column.`);
+    }
+  }
+
+  for (const fieldId of crosstabDefinition.columnFieldIds) {
+    if (!crosstabFieldLookup.has(fieldId)) {
+      issues.push(`Crosstab column field ${fieldId} is not a Main query column.`);
+    }
+  }
+
+  for (const value of crosstabDefinition.values) {
+    const field = crosstabFieldLookup.get(value.fieldId);
 
     if (!field) {
-      issues.push(`Crosstab value ${value.label} points to a missing field.`);
-    } else if (!report.query.sourceTableIds.includes(field.tableId)) {
-      issues.push(`Crosstab value ${value.label} uses an unselected datasource.`);
+      issues.push(`Crosstab value ${value.label} is not a Main query column.`);
     } else if (!field.aggregations.includes(value.aggregation)) {
       issues.push(`${value.aggregation.toUpperCase()} is not supported for ${field.label}.`);
+    }
+  }
+
+  const subqueryAliases = new Set<string>();
+
+  for (const subquery of report.subqueries) {
+    const alias = subquery.alias.trim().toLowerCase();
+
+    if (!subquery.name.trim()) {
+      issues.push(`Subquery ${subquery.id} name cannot be empty.`);
+    }
+
+    if (!alias) {
+      issues.push(`Subquery ${subquery.name} alias cannot be empty.`);
+    } else if (subqueryAliases.has(alias)) {
+      issues.push(`Subquery alias ${subquery.alias} is duplicated.`);
+    } else {
+      subqueryAliases.add(alias);
+    }
+
+    if (subquery.query.sourceTableIds.length === 0) {
+      issues.push(`Subquery ${subquery.name} must select at least one datasource table.`);
+    }
+
+    if (dependsOnSubquery(report, subquery.id, subquery.id)) {
+      issues.push(`Subquery ${subquery.name} has a circular datasource dependency.`);
+    }
+
+    if (!subquery.query.columns.some((column) => column.visible)) {
+      issues.push(`Subquery ${subquery.name} must expose at least one visible output column.`);
+    }
+
+    for (const tableId of subquery.query.sourceTableIds) {
+      if (tableId === createSubqueryTableId(subquery.id)) {
+        issues.push(`Subquery ${subquery.name} cannot use itself as a datasource.`);
+      } else if (!tableLookup.has(tableId)) {
+        issues.push(`Subquery ${subquery.name} uses a missing datasource ${tableId}.`);
+      }
+    }
+
+    for (const column of subquery.query.columns) {
+      const field = fieldLookup.get(column.fieldId);
+
+      if (!field) {
+        issues.push(`Subquery ${subquery.name} column ${column.alias} points to a missing field.`);
+      } else if (!subquery.query.sourceTableIds.includes(field.tableId)) {
+        issues.push(
+          `Subquery ${subquery.name} column ${column.alias} uses an unselected datasource.`,
+        );
+      }
+    }
+
+    for (const join of subquery.query.joins) {
+      if (join.conditions.length === 0) {
+        issues.push(`Subquery ${subquery.name} join ${join.id} must have at least one condition.`);
+        continue;
+      }
+
+      for (const condition of join.conditions) {
+        const fromField = fieldLookup.get(condition.fromFieldId);
+        const toField = fieldLookup.get(condition.toFieldId);
+
+        if (!fromField || !toField) {
+          issues.push(`Subquery ${subquery.name} join ${join.id} points to a missing field.`);
+          continue;
+        }
+
+        if (fromField.tableId === toField.tableId) {
+          issues.push(`Subquery ${subquery.name} join ${join.id} connects the same datasource.`);
+        }
+      }
     }
   }
 
@@ -1630,16 +2651,8 @@ function createEmptyReport(): ReportDefinition {
     tenantName: '',
     reportName: '',
     description: '',
-    query: {
-      sourceTableIds: [],
-      columns: [],
-      filters: [],
-      joins: [],
-      layout: {
-        tables: [],
-      },
-      parameters: [],
-    },
+    query: createEmptyQueryDocument(),
+    subqueries: [],
     crosstab: {
       rowFieldIds: [],
       columnFieldIds: [],
@@ -1647,5 +2660,18 @@ function createEmptyReport(): ReportDefinition {
       includeRowTotals: true,
       includeColumnTotals: true,
     },
+  };
+}
+
+function createEmptyQueryDocument(): QueryDocument {
+  return {
+    sourceTableIds: [],
+    columns: [],
+    filters: [],
+    joins: [],
+    layout: {
+      tables: [],
+    },
+    parameters: [],
   };
 }

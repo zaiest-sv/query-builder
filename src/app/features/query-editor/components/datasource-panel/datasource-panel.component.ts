@@ -1,5 +1,6 @@
 import { DOCUMENT } from '@angular/common';
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
+import { DataSourceField, QueryColumn, QuerySubquery } from '../../models/report-definition.model';
 import { writeTableDragData } from '../../models/query-editor-drag-drop.model';
 import { QueryEditorStore } from '../../services/query-editor-store.service';
 
@@ -17,6 +18,8 @@ interface TableDragGhost {
   readonly x: number;
   readonly y: number;
 }
+
+type DatasourcePanelTab = 'datasource' | 'subquery';
 
 const pointerDragThreshold = 6;
 
@@ -36,6 +39,7 @@ export class DatasourcePanelComponent {
   protected readonly store = inject(QueryEditorStore);
   protected readonly draggedTableId = signal<string | null>(null);
   protected readonly tableDragGhost = signal<TableDragGhost | null>(null);
+  protected readonly activePanelTab = signal<DatasourcePanelTab>('datasource');
   private readonly collapsedTableIds = signal<ReadonlySet<string>>(new Set());
   private readonly expandedTableIds = signal<ReadonlySet<string>>(new Set());
   protected readonly activeTableMenuId = signal<string | null>(null);
@@ -50,6 +54,11 @@ export class DatasourcePanelComponent {
 
   protected setSearchTerm(event: Event): void {
     this.store.setSearchTerm(readControlValue(event));
+  }
+
+  protected setActivePanelTab(tab: DatasourcePanelTab): void {
+    this.activePanelTab.set(tab);
+    this.activeTableMenuId.set(null);
   }
 
   protected isTableExpanded(tableId: string): boolean {
@@ -78,13 +87,21 @@ export class DatasourcePanelComponent {
   }
 
   protected useTable(tableId: string): void {
+    if (!this.canUseDatasourceTable(tableId)) {
+      return;
+    }
+
     this.activeTableMenuId.set(null);
     this.expandTable(tableId);
     this.store.selectTable(tableId);
   }
 
+  protected canUseDatasourceTable(tableId: string): boolean {
+    return this.store.canUseTableAsSource(tableId);
+  }
+
   protected isSourceTable(tableId: string): boolean {
-    return this.store.report().query.sourceTableIds.includes(tableId);
+    return this.store.activeQuery().sourceTableIds.includes(tableId);
   }
 
   protected isTableMenuOpen(tableId: string): boolean {
@@ -97,6 +114,10 @@ export class DatasourcePanelComponent {
   }
 
   protected addAllFields(tableId: string): void {
+    if (!this.canUseDatasourceTable(tableId)) {
+      return;
+    }
+
     this.activeTableMenuId.set(null);
     this.expandTable(tableId);
     this.store.addColumnsForTable(tableId);
@@ -107,8 +128,85 @@ export class DatasourcePanelComponent {
     this.store.removeSourceTable(tableId);
   }
 
+  protected useSubqueryAsSource(subqueryId: string): void {
+    if (!this.canUseSubqueryAsSource(subqueryId)) {
+      return;
+    }
+
+    this.store.selectTable(this.store.subqueryTableId(subqueryId));
+  }
+
+  protected updateSubqueryName(subqueryId: string, event: Event): void {
+    this.store.updateSubqueryName(subqueryId, readControlValue(event));
+  }
+
+  protected updateSubqueryAlias(subqueryId: string, event: Event): void {
+    this.store.updateSubqueryAlias(subqueryId, readControlValue(event));
+  }
+
+  protected canUseSubqueryAsSource(subqueryId: string): boolean {
+    const subquery = this.store
+      .report()
+      .subqueries.find((currentSubquery) => currentSubquery.id === subqueryId);
+
+    return Boolean(
+      subquery &&
+      this.subqueryIssues(subquery).length === 0 &&
+      this.store.canUseTableAsSource(this.store.subqueryTableId(subqueryId)),
+    );
+  }
+
+  protected subquerySourceCount(subquery: QuerySubquery): number {
+    return subquery.query.sourceTableIds.length;
+  }
+
+  protected outputColumnsForSubquery(subquery: QuerySubquery): readonly QueryColumn[] {
+    return subquery.query.columns.filter((column) => column.visible);
+  }
+
+  protected outputFieldForColumn(column: QueryColumn): DataSourceField | null {
+    return this.store.fieldLookup().get(column.fieldId) ?? null;
+  }
+
+  protected subqueryIssues(subquery: QuerySubquery): readonly string[] {
+    const issues: string[] = [];
+    const outputColumns = this.outputColumnsForSubquery(subquery);
+
+    if (subquery.query.sourceTableIds.length === 0) {
+      issues.push('Add at least one source.');
+    }
+
+    if (outputColumns.length === 0) {
+      issues.push('Select at least one visible output column.');
+    }
+
+    if (this.store.hasSubqueryDependencyCycle(subquery.id)) {
+      issues.push('Circular subquery dependency.');
+    }
+
+    for (const tableId of subquery.query.sourceTableIds) {
+      if (tableId === this.store.subqueryTableId(subquery.id)) {
+        issues.push('A subquery cannot use itself.');
+      } else if (!this.store.tableLookup().has(tableId)) {
+        issues.push(`Missing source: ${tableId}.`);
+      }
+    }
+
+    for (const column of subquery.query.columns) {
+      const field = this.store.fieldLookup().get(column.fieldId);
+
+      if (!field) {
+        issues.push(`Missing field for ${column.alias}.`);
+      } else if (!subquery.query.sourceTableIds.includes(field.tableId)) {
+        issues.push(`${column.alias} is not from a selected source.`);
+      }
+    }
+
+    return issues;
+  }
+
   protected startTableDrag(tableId: string, event: DragEvent): void {
-    if (!event.dataTransfer) {
+    if (!event.dataTransfer || !this.canUseDatasourceTable(tableId)) {
       return;
     }
 
@@ -123,7 +221,11 @@ export class DatasourcePanelComponent {
   }
 
   protected startTablePointerDrag(tableId: string, label: string, event: MouseEvent): void {
-    if (event.button !== 0 || isActionTarget(event.target)) {
+    if (
+      event.button !== 0 ||
+      isActionTarget(event.target) ||
+      !this.canUseDatasourceTable(tableId)
+    ) {
       return;
     }
 

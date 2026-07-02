@@ -36,10 +36,16 @@ const canvasTableRowStep = 264;
 const canvasTableStagger = [0, 28, 58] as const;
 const joinDragThreshold = 6;
 
+type JoinAnchorSide = 'left' | 'right';
+
 interface JoinPath {
   readonly key: string;
   readonly joinId: string;
   readonly conditionId: string;
+  readonly fromFieldId: string;
+  readonly toFieldId: string;
+  readonly startSide: JoinAnchorSide;
+  readonly endSide: JoinAnchorSide;
   readonly status: CanvasJoinStatus;
   readonly path: string;
   readonly startX: number;
@@ -107,6 +113,16 @@ export class QueryCanvasComponent implements AfterViewInit {
   protected readonly joinDragPreview = signal<JoinDragPreview | null>(null);
   protected readonly joinDropHint = signal<JoinDropHint | null>(null);
   protected readonly joinPaths = signal<readonly JoinPath[]>([]);
+  protected readonly fieldJoinSides = computed(() => {
+    const sides = new Map<string, Set<JoinAnchorSide>>();
+
+    for (const path of this.joinPaths()) {
+      addFieldJoinSide(sides, path.fromFieldId, path.startSide);
+      addFieldJoinSide(sides, path.toFieldId, path.endSide);
+    }
+
+    return sides;
+  });
   protected readonly joinLayerWidth = signal(980);
   protected readonly joinLayerHeight = signal(320);
   protected readonly joinLayerViewBox = computed(
@@ -268,6 +284,14 @@ export class QueryCanvasComponent implements AfterViewInit {
 
   protected isFieldJoined(fieldId: string): boolean {
     return this.store.joinedFieldIds().has(fieldId);
+  }
+
+  protected isFieldJoinedLeft(fieldId: string): boolean {
+    return this.fieldJoinSides().get(fieldId)?.has('left') ?? false;
+  }
+
+  protected isFieldJoinedRight(fieldId: string): boolean {
+    return this.fieldJoinSides().get(fieldId)?.has('right') ?? false;
   }
 
   protected isCanvasTableSelected(tableId: string): boolean {
@@ -701,8 +725,11 @@ function createJoinPathForCondition(
   const fromCenterX = fromRect.left + fromRect.width / 2;
   const toCenterX = toRect.left + toRect.width / 2;
   const sourceIsLeft = fromCenterX <= toCenterX;
-  const startX = (sourceIsLeft ? fromRect.right : fromRect.left) - canvasRect.left + scrollLeft;
-  const endX = (sourceIsLeft ? toRect.left : toRect.right) - canvasRect.left + scrollLeft;
+  const startSide: JoinAnchorSide = sourceIsLeft ? 'right' : 'left';
+  const endSide: JoinAnchorSide = sourceIsLeft ? 'left' : 'right';
+  const startX =
+    (startSide === 'right' ? fromRect.right : fromRect.left) - canvasRect.left + scrollLeft;
+  const endX = (endSide === 'left' ? toRect.left : toRect.right) - canvasRect.left + scrollLeft;
   const laneOffset = conditionIndex * 3;
   const startY = fromRect.top - canvasRect.top + scrollTop + fromRect.height / 2 + laneOffset;
   const endY = toRect.top - canvasRect.top + scrollTop + toRect.height / 2 + laneOffset;
@@ -712,6 +739,10 @@ function createJoinPathForCondition(
     key: `${join.id}:${condition.id}`,
     joinId: join.id,
     conditionId: condition.id,
+    fromFieldId: condition.fromFieldId,
+    toFieldId: condition.toFieldId,
+    startSide,
+    endSide,
     status,
     path: createCurvePath(startX, startY, endX, endY),
     startX: round(startX),
@@ -719,6 +750,17 @@ function createJoinPathForCondition(
     endX: round(endX),
     endY: round(endY),
   };
+}
+
+function addFieldJoinSide(
+  sides: Map<string, Set<JoinAnchorSide>>,
+  fieldId: string,
+  side: JoinAnchorSide,
+): void {
+  const fieldSides = sides.get(fieldId) ?? new Set<JoinAnchorSide>();
+
+  fieldSides.add(side);
+  sides.set(fieldId, fieldSides);
 }
 
 function createPointerJoinPreview(

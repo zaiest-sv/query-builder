@@ -5,20 +5,10 @@ export type SortDirection = 'none' | 'asc' | 'desc';
 export type QueryJoinType = 'inner' | 'left' | 'right' | 'full' | 'cross';
 
 export type QueryJoinOperator =
-  | 'equals'
-  | 'notEquals'
-  | 'greaterThan'
-  | 'greaterThanOrEquals'
-  | 'lessThan'
-  | 'lessThanOrEquals';
+  'equals' | 'notEquals' | 'greaterThan' | 'greaterThanOrEquals' | 'lessThan' | 'lessThanOrEquals';
 
 export type FilterOperator =
-  | 'equals'
-  | 'notEquals'
-  | 'contains'
-  | 'greaterThan'
-  | 'lessThan'
-  | 'isEmpty';
+  'equals' | 'notEquals' | 'contains' | 'greaterThan' | 'lessThan' | 'isEmpty';
 
 export type CrosstabAggregation = 'count' | 'sum' | 'avg' | 'min' | 'max';
 
@@ -43,6 +33,8 @@ export interface DataSourceTable {
   readonly name: string;
   readonly alias: string;
   readonly label: string;
+  readonly sourceType?: 'table' | 'subquery';
+  readonly subqueryId?: string;
   readonly fields: readonly DataSourceField[];
 }
 
@@ -119,6 +111,13 @@ export interface QueryDocument {
   readonly parameters: readonly QueryParameter[];
 }
 
+export interface QuerySubquery {
+  readonly id: string;
+  readonly name: string;
+  readonly alias: string;
+  readonly query: QueryDocument;
+}
+
 export interface CrosstabValueDefinition {
   readonly id: string;
   readonly fieldId: string;
@@ -140,6 +139,7 @@ export interface ReportDefinition {
   readonly reportName: string;
   readonly description: string;
   readonly query: QueryDocument;
+  readonly subqueries: readonly QuerySubquery[];
   readonly crosstab: CrosstabDefinition;
 }
 

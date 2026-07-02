@@ -1,9 +1,9 @@
 <div class="canvas-header">
   <div>
-    <h2>Main Query</h2>
+    <h2>{{ store.activeQueryLabel() }}</h2>
     <span>{{ store.selectedTables().length }} sources selected</span>
   </div>
-  <span class="metric-pill">{{ store.filteredSourceRows().length }} mock rows</span>
+  <span class="metric-pill">{{ store.activeFilteredSourceRows().length }} mock rows</span>
 </div>
 
 <div
@@ -148,7 +148,8 @@
               [attr.data-field-id]="field.id"
               [class.canvas-field-row--selected]="isFieldSelected(field.id)"
               [class.canvas-field-row--active]="isFieldActive(field.id)"
-              [class.canvas-field-row--joined]="isFieldJoined(field.id)"
+              [class.canvas-field-row--joined-left]="isFieldJoinedLeft(field.id)"
+              [class.canvas-field-row--joined-right]="isFieldJoinedRight(field.id)"
               [class.canvas-field-row--join-source]="draggedJoinFieldId() === field.id"
               [class.canvas-field-row--join-target]="canDropJoinOn(field.id)"
               [class.canvas-field-row--join-blocked]="isJoinDropBlocked(field.id)"

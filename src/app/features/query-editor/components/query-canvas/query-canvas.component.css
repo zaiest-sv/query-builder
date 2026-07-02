@@ -314,6 +314,7 @@ select:focus-visible {
 }
 
 .canvas-field-row {
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: 16px 24px minmax(0, 1fr) auto;
   align-items: center;
@@ -321,6 +322,7 @@ select:focus-visible {
   min-height: 30px;
   padding: 4px 9px;
   border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
   color: var(--app-text);
   cursor: pointer;
   touch-action: none;
@@ -340,8 +342,12 @@ select:focus-visible {
   box-shadow: 0 0 0 2px rgba(18, 107, 115, 0.18) inset;
 }
 
-.canvas-field-row--joined {
+.canvas-field-row--joined-left {
   border-left-color: var(--app-blue);
+}
+
+.canvas-field-row--joined-right {
+  border-right-color: var(--app-blue);
 }
 
 .canvas-field-row--join-source {

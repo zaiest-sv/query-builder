@@ -1,5 +1,9 @@
 import { DATA_SOURCE_GROUPS, MOCK_REPORT } from '../data/mock-report-data';
-import { DataSourceField, DataSourceTable, ReportDefinition } from '../models/report-definition.model';
+import {
+  DataSourceField,
+  DataSourceTable,
+  ReportDefinition,
+} from '../models/report-definition.model';
 import { QuerySqlBuilderService } from './query-sql-builder.service';
 
 describe('QuerySqlBuilderService', () => {
@@ -125,5 +129,201 @@ describe('QuerySqlBuilderService', () => {
     expect(sql).toContain(
       'LEFT JOIN [dbo].[FinancialLedger] AS [ledger] ON [encounter].[EncounterId] >= [ledger].[EncounterId]',
     );
+  });
+
+  it('builds subquery datasources as derived tables', () => {
+    const subqueryTable: DataSourceTable = {
+      id: 'subquery:subquery-status',
+      schema: 'subquery',
+      name: 'Status Subquery',
+      alias: 'status_sq',
+      label: 'Status Subquery',
+      sourceType: 'subquery',
+      subqueryId: 'subquery-status',
+      fields: [
+        {
+          id: 'subquery:subquery-status.Status',
+          tableId: 'subquery:subquery-status',
+          name: 'Status',
+          label: 'Status',
+          expression: 'status_sq.Status',
+          type: 'string',
+          nullable: false,
+          aggregations: ['count'],
+        },
+      ],
+    };
+    const report: ReportDefinition = {
+      ...MOCK_REPORT,
+      query: {
+        ...MOCK_REPORT.query,
+        sourceTableIds: ['subquery:subquery-status'],
+        columns: [
+          {
+            id: 'column-subquery-status',
+            fieldId: 'subquery:subquery-status.Status',
+            expression: 'status_sq.Status',
+            alias: 'Status',
+            visible: true,
+            sortDirection: 'none',
+          },
+        ],
+        filters: [],
+        joins: [],
+      },
+      subqueries: [
+        {
+          id: 'subquery-status',
+          name: 'Status Subquery',
+          alias: 'status_sq',
+          query: {
+            ...MOCK_REPORT.query,
+            sourceTableIds: ['Encounter'],
+            columns: [
+              {
+                id: 'column-status-output',
+                fieldId: 'Encounter.Status',
+                expression: 'Encounter.Status',
+                alias: 'Status',
+                visible: true,
+                sortDirection: 'none',
+              },
+            ],
+            filters: [],
+            joins: [],
+          },
+        },
+      ],
+    };
+    const subqueryTableLookup = new Map(tableLookup);
+    const subqueryFieldLookup = new Map(fieldLookup);
+
+    subqueryTableLookup.set(subqueryTable.id, subqueryTable);
+    subqueryFieldLookup.set(subqueryTable.fields[0].id, subqueryTable.fields[0]);
+
+    const sql = service.build(report, subqueryTableLookup, subqueryFieldLookup);
+
+    expect(sql).toContain('FROM (');
+    expect(sql).toContain(
+      '  SELECT\n    [encounter].[Status] AS [Status]\n  FROM [dbo].[Encounter] AS [encounter]',
+    );
+    expect(sql).toContain(') AS [status_sq]');
+    expect(sql).toContain('[status_sq].[Status] AS [Status]');
+  });
+
+  it('guards SQL generation for circular subquery dependencies', () => {
+    const firstSubqueryTable: DataSourceTable = {
+      id: 'subquery:first',
+      schema: 'subquery',
+      name: 'First',
+      alias: 'first_sq',
+      label: 'First',
+      sourceType: 'subquery',
+      subqueryId: 'first',
+      fields: [
+        {
+          id: 'subquery:first.Code',
+          tableId: 'subquery:first',
+          name: 'Code',
+          label: 'Code',
+          expression: 'first_sq.Code',
+          type: 'string',
+          nullable: false,
+          aggregations: ['count'],
+        },
+      ],
+    };
+    const secondSubqueryTable: DataSourceTable = {
+      ...firstSubqueryTable,
+      id: 'subquery:second',
+      name: 'Second',
+      alias: 'second_sq',
+      label: 'Second',
+      subqueryId: 'second',
+      fields: [
+        {
+          ...firstSubqueryTable.fields[0],
+          id: 'subquery:second.Code',
+          tableId: 'subquery:second',
+          expression: 'second_sq.Code',
+        },
+      ],
+    };
+    const report: ReportDefinition = {
+      ...MOCK_REPORT,
+      query: {
+        ...MOCK_REPORT.query,
+        sourceTableIds: ['subquery:first'],
+        columns: [
+          {
+            id: 'column-first-code',
+            fieldId: 'subquery:first.Code',
+            expression: 'first_sq.Code',
+            alias: 'Code',
+            visible: true,
+            sortDirection: 'none',
+          },
+        ],
+        filters: [],
+        joins: [],
+      },
+      subqueries: [
+        {
+          id: 'first',
+          name: 'First',
+          alias: 'first_sq',
+          query: {
+            ...MOCK_REPORT.query,
+            sourceTableIds: ['subquery:second'],
+            columns: [
+              {
+                id: 'column-second-code',
+                fieldId: 'subquery:second.Code',
+                expression: 'second_sq.Code',
+                alias: 'Code',
+                visible: true,
+                sortDirection: 'none',
+              },
+            ],
+            filters: [],
+            joins: [],
+          },
+        },
+        {
+          id: 'second',
+          name: 'Second',
+          alias: 'second_sq',
+          query: {
+            ...MOCK_REPORT.query,
+            sourceTableIds: ['subquery:first'],
+            columns: [
+              {
+                id: 'column-first-code-output',
+                fieldId: 'subquery:first.Code',
+                expression: 'first_sq.Code',
+                alias: 'Code',
+                visible: true,
+                sortDirection: 'none',
+              },
+            ],
+            filters: [],
+            joins: [],
+          },
+        },
+      ],
+    };
+    const subqueryTableLookup = new Map(tableLookup);
+    const subqueryFieldLookup = new Map(fieldLookup);
+
+    subqueryTableLookup.set(firstSubqueryTable.id, firstSubqueryTable);
+    subqueryTableLookup.set(secondSubqueryTable.id, secondSubqueryTable);
+    subqueryFieldLookup.set(firstSubqueryTable.fields[0].id, firstSubqueryTable.fields[0]);
+    subqueryFieldLookup.set(secondSubqueryTable.fields[0].id, secondSubqueryTable.fields[0]);
+
+    const sql = service.build(report, subqueryTableLookup, subqueryFieldLookup);
+
+    expect(sql).toContain('CircularDependency');
+    expect(sql).toContain(') AS [first_sq]');
+    expect(sql).toContain(') AS [second_sq]');
   });
 });
