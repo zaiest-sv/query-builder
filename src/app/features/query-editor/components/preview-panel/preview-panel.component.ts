@@ -50,7 +50,7 @@ export class PreviewPanelComponent {
   }
 
   protected updateParameterValue(parameterId: string, event: Event): void {
-    this.store.updateParameterDefaultValue(parameterId, readControlValue(event));
+    this.store.updatePreviewParameterValue(parameterId, readControlValue(event));
   }
 
   protected parameterInputType(parameter: QueryParameter): string {

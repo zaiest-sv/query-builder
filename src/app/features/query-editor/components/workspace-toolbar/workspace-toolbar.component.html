@@ -40,15 +40,12 @@
 </div>
 
 <div class="toolbar-actions">
-  <button class="icon-button icon-button--wide" type="button" title="SQL" aria-label="SQL">
-    SQL
-  </button>
   <button
     class="icon-button icon-button--wide"
     type="button"
     title="Validate"
     aria-label="Validate"
-    (click)="store.save()"
+    (click)="store.validateOnServer()"
   >
     OK
   </button>

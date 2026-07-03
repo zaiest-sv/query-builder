@@ -1,4 +1,17 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { DOCUMENT } from '@angular/common';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  EventEmitter,
+  HostListener,
+  OnInit,
+  Output,
+  computed,
+  inject,
+  input,
+  signal,
+} from '@angular/core';
+import { ActivatedRoute } from '@angular/router';
 import { AdvancedPanelComponent } from './components/advanced-panel/advanced-panel.component';
 import { CrosstabPanelComponent } from './components/crosstab-panel/crosstab-panel.component';
 import { DatasourcePanelComponent } from './components/datasource-panel/datasource-panel.component';
@@ -26,18 +39,18 @@ const tabs: readonly EditorTabItem[] = [
   { id: 'advanced', label: 'Advanced' },
 ];
 
-const columnGridResizerHeight = 12;
-const defaultColumnGridHeight = 132;
-const minColumnGridHeight = 96;
+const columnGridResizerHeight = 10;
+const defaultColumnGridHeight = 124;
+const minColumnGridHeight = 88;
 const maxColumnGridHeight = 420;
-const defaultDatasourcePanelWidth = 350;
-const minDatasourcePanelWidth = 240;
-const maxDatasourcePanelWidth = 560;
-const defaultQuerySidePanelWidth = 430;
-const minQuerySidePanelWidth = 320;
-const maxQuerySidePanelWidth = 680;
+const defaultDatasourcePanelWidth = 320;
+const minDatasourcePanelWidth = 250;
+const maxDatasourcePanelWidth = 520;
+const defaultQuerySidePanelWidth = 370;
+const minQuerySidePanelWidth = 300;
+const maxQuerySidePanelWidth = 600;
 const panelResizeStep = 24;
-const layoutStorageKey = 'query-builder.editor-layout';
+const layoutStorageKey = 'query-builder.editor-layout.v2';
 
 type HorizontalResizeTarget = 'datasource' | 'query-side';
 
@@ -65,9 +78,13 @@ interface EditorLayoutPreference {
   styleUrl: './query-editor.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class QueryEditorComponent {
+export class QueryEditorComponent implements OnInit {
   private readonly initialLayout = readEditorLayoutPreference();
+  private readonly document = inject(DOCUMENT);
+  private readonly route = inject(ActivatedRoute, { optional: true });
   protected readonly store = inject(QueryEditorStore);
+  readonly reportId = input('report-daily-check');
+  @Output() readonly closeRequested = new EventEmitter<void>();
   protected readonly tabs = tabs;
   protected readonly activeTab = signal<EditorTab>('query');
   protected readonly activeHorizontalResize = signal<HorizontalResizeTarget | null>(null);
@@ -77,6 +94,39 @@ export class QueryEditorComponent {
   protected readonly columnGridPanelHeight = computed(
     () => `${this.columnGridHeight() + columnGridResizerHeight}px`,
   );
+
+  ngOnInit(): void {
+    this.store.loadReport(this.route?.snapshot.paramMap.get('reportId') || this.reportId());
+  }
+
+  @HostListener('window:beforeunload', ['$event'])
+  protected handleBeforeUnload(event: BeforeUnloadEvent): void {
+    if (!this.store.isDirty()) {
+      return;
+    }
+
+    event.preventDefault();
+    event.returnValue = '';
+  }
+
+  protected saveReport(): void {
+    this.store.save({ confirmWarnings: (warnings) => this.confirmValidationWarnings(warnings) });
+  }
+
+  protected saveAndClose(): void {
+    this.store.save({
+      confirmWarnings: (warnings) => this.confirmValidationWarnings(warnings),
+      onSaved: () => this.closeEditor(),
+    });
+  }
+
+  protected closeReport(): void {
+    if (this.store.isDirty() && !this.confirmDiscardChanges()) {
+      return;
+    }
+
+    this.closeEditor();
+  }
 
   protected setActiveTab(tab: EditorTab): void {
     if (tab === 'crosstab') {
@@ -187,6 +237,22 @@ export class QueryEditorComponent {
       querySidePanelWidth: this.querySidePanelWidth(),
       columnGridHeight: this.columnGridHeight(),
     });
+  }
+
+  private confirmValidationWarnings(warnings: readonly string[]): boolean {
+    return (
+      this.document.defaultView?.confirm(
+        `Save with ${warnings.length} validation warning${warnings.length === 1 ? '' : 's'}?`,
+      ) ?? true
+    );
+  }
+
+  private confirmDiscardChanges(): boolean {
+    return this.document.defaultView?.confirm('Close without saving changes?') ?? true;
+  }
+
+  private closeEditor(): void {
+    this.closeRequested.emit();
   }
 }
 

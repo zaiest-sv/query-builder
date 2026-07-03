@@ -116,6 +116,11 @@ export type QueryCanvasSelection =
 
 export type QueryWorkspaceId = 'main' | string;
 
+export interface SaveOptions {
+  readonly confirmWarnings?: (warnings: readonly string[]) => boolean;
+  readonly onSaved?: () => void;
+}
+
 @Injectable({ providedIn: 'root' })
 export class QueryEditorStore {
   private readonly api = inject(QUERY_EDITOR_API);
@@ -134,6 +139,9 @@ export class QueryEditorStore {
   private readonly canvasSelectionSignal = signal<QueryCanvasSelection>({ kind: 'none' });
   private readonly searchTermSignal = signal('');
   private readonly selectedTableIdSignal = signal('');
+  private readonly previewParameterValuesSignal = signal<
+    Readonly<Record<string, Readonly<Record<string, string>>>>
+  >({});
   private readonly dirtySignal = signal(false);
   private readonly loadStateSignal = signal<EditorLoadState>({
     status: 'loading',
@@ -156,7 +164,8 @@ export class QueryEditorStore {
     issues: [],
     generatedSql: '',
   });
-  private sequence = 1;
+  private readonly generatedIds = new Set<string>();
+  private confirmedWarningSignature = '';
 
   readonly metadata = this.metadataSignal.asReadonly();
   readonly activeQueryId = this.activeQueryIdSignal.asReadonly();
@@ -164,6 +173,7 @@ export class QueryEditorStore {
   readonly report = this.reportSignal.asReadonly();
   readonly searchTerm = this.searchTermSignal.asReadonly();
   readonly selectedTableId = this.selectedTableIdSignal.asReadonly();
+  readonly previewParameterValues = this.previewParameterValuesSignal.asReadonly();
   readonly isDirty = this.dirtySignal.asReadonly();
   readonly loadState = this.loadStateSignal.asReadonly();
   readonly saveState = this.saveStateSignal.asReadonly();
@@ -277,6 +287,7 @@ export class QueryEditorStore {
       this.previewDataRows(),
       this.report().query.filters,
       this.report().query.parameters,
+      this.previewParameterValuesForQuery('main'),
     ),
   );
   readonly activeFilteredSourceRows = computed(() =>
@@ -284,6 +295,7 @@ export class QueryEditorStore {
       this.previewDataRows(),
       this.activeQuery().filters,
       this.activeQuery().parameters,
+      this.activePreviewParameterValues(),
     ),
   );
   readonly previewSourceRows = computed(() =>
@@ -359,6 +371,18 @@ export class QueryEditorStore {
       this.fieldLookup(),
     ),
   );
+  readonly validationErrors = computed(() =>
+    this.validationService
+      .validateReportIssues(this.report(), this.tableLookup(), this.fieldLookup())
+      .filter((issue) => issue.severity === 'error')
+      .map((issue) => issue.message),
+  );
+  readonly validationWarnings = computed(() =>
+    this.validationService
+      .validateReportIssues(this.report(), this.tableLookup(), this.fieldLookup())
+      .filter((issue) => issue.severity === 'warning')
+      .map((issue) => issue.message),
+  );
   readonly canvasJoins = computed(() => {
     const activeQuery = this.activeQuery();
     const fieldLookup = this.fieldLookup();
@@ -393,10 +417,6 @@ export class QueryEditorStore {
   );
   readonly reportJson = computed(() => JSON.stringify(this.report(), null, 2));
 
-  constructor() {
-    this.loadReport('report-daily-check');
-  }
-
   loadReport(reportId: string): void {
     this.loadStateSignal.set({
       status: 'loading',
@@ -411,6 +431,9 @@ export class QueryEditorStore {
           this.metadataSignal.set(data.metadata);
           this.sourceRowsSignal.set(data.rows);
           this.reportSignal.set(data.report);
+          this.generatedIds.clear();
+          this.confirmedWarningSignature = '';
+          this.previewParameterValuesSignal.set({});
           this.activeQueryIdSignal.set('main');
           const initialTableId =
             data.report.query.sourceTableIds[0] ?? data.metadata[0]?.tables[0]?.id ?? '';
@@ -1388,6 +1411,8 @@ export class QueryEditorStore {
           fieldId,
           operator: field.type === 'string' ? 'contains' : 'equals',
           value: '',
+          valueTo: '',
+          negate: false,
           parameterName: '',
         },
       ],
@@ -1401,6 +1426,14 @@ export class QueryEditorStore {
 
   updateFilterValue(filterId: string, value: string): void {
     this.updateFilter(filterId, { value });
+  }
+
+  updateFilterValueTo(filterId: string, valueTo: string): void {
+    this.updateFilter(filterId, { valueTo });
+  }
+
+  updateFilterNegate(filterId: string, negate: boolean): void {
+    this.updateFilter(filterId, { negate });
   }
 
   updateFilterParameter(filterId: string, parameterName: string): void {
@@ -1525,6 +1558,8 @@ export class QueryEditorStore {
           fieldId,
           operator: 'equals',
           value: '',
+          valueTo: '',
+          negate: false,
           parameterName: parameter.name,
         },
       ],
@@ -1627,6 +1662,29 @@ export class QueryEditorStore {
 
   updateParameterDefaultValue(parameterId: string, defaultValue: string): void {
     this.updateParameter(parameterId, { defaultValue });
+  }
+
+  previewParameterValue(parameter: QueryParameter): string {
+    return this.activePreviewParameterValues()[parameter.name] ?? parameter.defaultValue;
+  }
+
+  updatePreviewParameterValue(parameterId: string, value: string): void {
+    const parameter = this.activeQuery().parameters.find(
+      (currentParameter) => currentParameter.id === parameterId,
+    );
+
+    if (!parameter) {
+      return;
+    }
+
+    const queryId = this.activeQueryId();
+    this.previewParameterValuesSignal.update((allValues) => ({
+      ...allValues,
+      [queryId]: {
+        ...(allValues[queryId] ?? {}),
+        [parameter.name]: value,
+      },
+    }));
   }
 
   updateParameterLookupEnabled(parameterId: string, enabled: boolean): void {
@@ -1928,15 +1986,33 @@ export class QueryEditorStore {
       });
   }
 
-  save(): void {
-    const issues = this.validationIssues();
+  save(options: SaveOptions = {}): void {
+    const errors = this.validationErrors();
+    const warnings = this.validationWarnings();
+    const warningSignature = warnings.join('\n');
 
-    if (issues.length > 0) {
+    if (errors.length > 0) {
       this.saveStateSignal.set({
         status: 'invalid',
-        message: `${issues.length} validation issue${issues.length === 1 ? '' : 's'}`,
+        message: `${errors.length} validation error${errors.length === 1 ? '' : 's'}`,
       });
       return;
+    }
+
+    if (
+      warnings.length > 0 &&
+      warningSignature !== this.confirmedWarningSignature &&
+      options.confirmWarnings?.(warnings) === false
+    ) {
+      this.saveStateSignal.set({
+        status: 'invalid',
+        message: `${warnings.length} validation warning${warnings.length === 1 ? '' : 's'}`,
+      });
+      return;
+    }
+
+    if (warnings.length > 0) {
+      this.confirmedWarningSignature = warningSignature;
     }
 
     this.saveStateSignal.set({
@@ -1956,6 +2032,7 @@ export class QueryEditorStore {
             message: response.message,
             savedAt: new Date(response.savedAt).toLocaleTimeString(),
           });
+          options.onSaved?.();
         },
         error: () => {
           this.saveStateSignal.set({
@@ -1971,7 +2048,10 @@ export class QueryEditorStore {
       report: this.report(),
       queryId: this.activeQueryId(),
       limit,
-      parameterValues: createParameterValues(this.activeQuery().parameters),
+      parameterValues: createParameterValues(
+        this.activeQuery().parameters,
+        this.activePreviewParameterValues(),
+      ),
     };
   }
 
@@ -2168,10 +2248,36 @@ export class QueryEditorStore {
     );
   }
 
-  private createId(prefix: string): string {
-    const id = `${prefix}-${this.sequence}`;
-    this.sequence += 1;
+  private activePreviewParameterValues(): Readonly<Record<string, string>> {
+    return this.previewParameterValuesForQuery(this.activeQueryId());
+  }
 
+  private previewParameterValuesForQuery(queryId: QueryWorkspaceId): Readonly<Record<string, string>> {
+    return this.previewParameterValues()[queryId] ?? {};
+  }
+
+  private createId(prefix: string): string {
+    const usedIds = collectReportIds(this.report());
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const id = `${prefix}-${createRandomIdPart()}`;
+
+      if (!usedIds.has(id) && !this.generatedIds.has(id)) {
+        this.generatedIds.add(id);
+        return id;
+      }
+    }
+
+    const fallbackBase = `${prefix}-${Date.now().toString(36)}`;
+    let attempt = 1;
+    let id = fallbackBase;
+
+    while (usedIds.has(id) || this.generatedIds.has(id)) {
+      attempt += 1;
+      id = `${fallbackBase}-${attempt}`;
+    }
+
+    this.generatedIds.add(id);
     return id;
   }
 
@@ -2191,6 +2297,7 @@ export class QueryEditorStore {
 
   private markDirty(): void {
     this.dirtySignal.set(true);
+    this.confirmedWarningSignature = '';
     this.saveStateSignal.set({
       status: 'idle',
       message: 'Unsaved changes',
@@ -2440,10 +2547,61 @@ function parseLookupOptions(value: string): readonly string[] {
 
 function createParameterValues(
   parameters: readonly QueryParameter[],
+  runtimeValues: Readonly<Record<string, string>>,
 ): Readonly<Record<string, string>> {
   return Object.fromEntries(
-    parameters.map((parameter) => [parameter.name, parameter.defaultValue] as const),
+    parameters.map(
+      (parameter) => [parameter.name, runtimeValues[parameter.name] ?? parameter.defaultValue] as const,
+    ),
   );
+}
+
+function collectReportIds(report: ReportDefinition): ReadonlySet<string> {
+  const ids = new Set<string>();
+  collectQueryIds(report.query, ids);
+
+  for (const subquery of report.subqueries) {
+    ids.add(subquery.id);
+    collectQueryIds(subquery.query, ids);
+  }
+
+  for (const value of report.crosstab.values) {
+    ids.add(value.id);
+  }
+
+  return ids;
+}
+
+function collectQueryIds(query: QueryDocument, ids: Set<string>): void {
+  for (const column of query.columns) {
+    ids.add(column.id);
+  }
+
+  for (const filter of query.filters) {
+    ids.add(filter.id);
+  }
+
+  for (const parameter of query.parameters) {
+    ids.add(parameter.id);
+  }
+
+  for (const join of query.joins) {
+    ids.add(join.id);
+
+    for (const condition of join.conditions) {
+      ids.add(condition.id);
+    }
+  }
+}
+
+function createRandomIdPart(): string {
+  const randomUuid = globalThis.crypto?.randomUUID?.();
+
+  if (randomUuid) {
+    return randomUuid;
+  }
+
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 function isDefaultColumnExpression(expression: string, field: DataSourceField): boolean {

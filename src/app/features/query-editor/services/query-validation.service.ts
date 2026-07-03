@@ -15,6 +15,13 @@ import {
 } from './query-join-graph.service';
 import { createSubqueryTableId, parseSubqueryTableId } from './query-subquery-datasource.service';
 
+export type QueryValidationSeverity = 'error' | 'warning';
+
+export interface QueryValidationIssue {
+  readonly severity: QueryValidationSeverity;
+  readonly message: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class QueryValidationService {
   private readonly crosstabConfig = inject(QueryCrosstabConfigService);
@@ -26,6 +33,22 @@ export class QueryValidationService {
     tableLookup: ReadonlyMap<string, DataSourceTable>,
     fieldLookup: ReadonlyMap<string, DataSourceField>,
   ): readonly string[] {
+    return this.validateActiveQueryIssues(
+      query,
+      subquery,
+      report,
+      tableLookup,
+      fieldLookup,
+    ).map((issue) => issue.message);
+  }
+
+  validateActiveQueryIssues(
+    query: QueryDocument,
+    subquery: QuerySubquery | null,
+    report: ReportDefinition,
+    tableLookup: ReadonlyMap<string, DataSourceTable>,
+    fieldLookup: ReadonlyMap<string, DataSourceField>,
+  ): readonly QueryValidationIssue[] {
     const issues = [
       ...this.validateQueryDocument(
         query,
@@ -43,7 +66,7 @@ export class QueryValidationService {
       issues.push(`${subquery.name}: circular subquery datasource dependency.`);
     }
 
-    return issues;
+    return issues.map(createErrorIssue);
   }
 
   validateReport(
@@ -51,6 +74,16 @@ export class QueryValidationService {
     tableLookup: ReadonlyMap<string, DataSourceTable>,
     fieldLookup: ReadonlyMap<string, DataSourceField>,
   ): readonly string[] {
+    return this.validateReportIssues(report, tableLookup, fieldLookup).map(
+      (issue) => issue.message,
+    );
+  }
+
+  validateReportIssues(
+    report: ReportDefinition,
+    tableLookup: ReadonlyMap<string, DataSourceTable>,
+    fieldLookup: ReadonlyMap<string, DataSourceField>,
+  ): readonly QueryValidationIssue[] {
     const issues: string[] = [
       ...this.validateQueryDocument(report.query, 'Main query', tableLookup, fieldLookup),
     ];
@@ -135,7 +168,9 @@ export class QueryValidationService {
       }
     }
 
-    return issues;
+    return issues.map((message) =>
+      isWarningValidationMessage(message) ? createWarningIssue(message) : createErrorIssue(message),
+    );
   }
 
   dependsOnSubquery(
@@ -364,6 +399,18 @@ export class QueryValidationService {
 
     return issues;
   }
+}
+
+function createErrorIssue(message: string): QueryValidationIssue {
+  return { severity: 'error', message };
+}
+
+function createWarningIssue(message: string): QueryValidationIssue {
+  return { severity: 'warning', message };
+}
+
+function isWarningValidationMessage(message: string): boolean {
+  return message.startsWith('Crosstab ');
 }
 
 function createJoinPairIssues(

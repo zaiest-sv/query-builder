@@ -13,9 +13,15 @@ const filterOperators: readonly FilterOperator[] = [
   'equals',
   'notEquals',
   'contains',
+  'startsWith',
+  'endsWith',
   'greaterThan',
+  'greaterThanOrEquals',
   'lessThan',
+  'lessThanOrEquals',
   'isEmpty',
+  'isNull',
+  'between',
 ];
 const fieldTypes: readonly FieldType[] = ['string', 'number', 'date', 'boolean'];
 
@@ -72,6 +78,14 @@ export class PromptedCriteriaPanelComponent {
 
   protected updateFilterValue(filterId: string, event: Event): void {
     this.store.updateFilterValue(filterId, readControlValue(event));
+  }
+
+  protected updateFilterValueTo(filterId: string, event: Event): void {
+    this.store.updateFilterValueTo(filterId, readControlValue(event));
+  }
+
+  protected updateFilterNegate(filterId: string, event: Event): void {
+    this.store.updateFilterNegate(filterId, readCheckedValue(event));
   }
 
   protected updateFilterParameter(filterId: string, event: Event): void {
@@ -153,6 +167,10 @@ export class PromptedCriteriaPanelComponent {
     }
 
     return 'text';
+  }
+
+  protected filterUsesValue(filter: QueryFilter): boolean {
+    return filter.operator !== 'isEmpty' && filter.operator !== 'isNull';
   }
 
   protected fieldLabel(fieldId: string): string {

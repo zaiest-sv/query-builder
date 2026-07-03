@@ -5,7 +5,7 @@ import { ReportDefinition } from './models/report-definition.model';
 import { QUERY_EDITOR_API, QueryEditorApi } from './services/query-editor-api.service';
 import { QueryEditorComponent } from './query-editor.component';
 
-const layoutStorageKey = 'query-builder.editor-layout';
+const layoutStorageKey = 'query-builder.editor-layout.v2';
 
 describe('QueryEditorComponent layout preferences', () => {
   let fixture: ComponentFixture<QueryEditorComponent>;
@@ -64,7 +64,7 @@ describe('QueryEditorComponent layout preferences', () => {
 
     expect(datasourceResizer?.getAttribute('aria-valuenow')).toBe('444');
     expect(querySideResizer?.getAttribute('aria-valuenow')).toBe('512');
-    expect(canvasPanel?.style.getPropertyValue('--query-column-grid-height')).toBe('222px');
+    expect(canvasPanel?.style.getPropertyValue('--query-column-grid-height')).toBe('220px');
   });
 
   it('persists keyboard panel resizing and column grid resizing', async () => {
@@ -88,7 +88,7 @@ describe('QueryEditorComponent layout preferences', () => {
       readonly columnGridHeight?: number;
     };
 
-    expect(storedLayout.datasourcePanelWidth).toBe(326);
+    expect(storedLayout.datasourcePanelWidth).toBe(296);
     expect(storedLayout.columnGridHeight).toBe(240);
   });
 

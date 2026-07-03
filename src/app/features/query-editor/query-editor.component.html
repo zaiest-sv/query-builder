@@ -27,7 +27,7 @@
         class="button button--secondary"
         type="button"
         [disabled]="store.saveState().status === 'saving'"
-        (click)="store.save()"
+        (click)="saveReport()"
       >
         <span aria-hidden="true">OK</span>
         Save
@@ -36,11 +36,12 @@
         class="button button--primary"
         type="button"
         [disabled]="store.saveState().status === 'saving'"
-        (click)="store.save()"
+        (click)="saveAndClose()"
       >
         <span aria-hidden="true">OK</span>
         Save & Close
       </button>
+      <button class="button" type="button" (click)="closeReport()">Close</button>
     </div>
   </header>
 

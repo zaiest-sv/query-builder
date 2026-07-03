@@ -14,11 +14,21 @@ import {
 } from '../models/report-definition.model';
 import { findConflictingJoinPairIds } from './query-join-graph.service';
 
-const operatorLabels: Readonly<Record<Exclude<FilterOperator, 'contains' | 'isEmpty'>, string>> = {
+const operatorLabels: Readonly<
+  Record<
+    Exclude<
+      FilterOperator,
+      'contains' | 'startsWith' | 'endsWith' | 'isEmpty' | 'isNull' | 'between'
+    >,
+    string
+  >
+> = {
   equals: '=',
   notEquals: '<>',
   greaterThan: '>',
+  greaterThanOrEquals: '>=',
   lessThan: '<',
+  lessThanOrEquals: '<=',
 };
 
 const joinOperatorLabels: Readonly<Record<QueryJoinOperator, string>> = {
@@ -88,16 +98,26 @@ export class QuerySqlBuilderService {
       const value = filter.parameterName
         ? formatParameterName(filter.parameterName)
         : formatSqlValue(filter.value, field?.type ?? 'string');
+      const valueTo = formatSqlValue(filter.valueTo ?? '', field?.type ?? 'string');
+      let condition: string;
 
       if (filter.operator === 'isEmpty') {
-        return `  (${expression} IS NULL OR ${expression} = '')`;
+        condition = `(${expression} IS NULL OR ${expression} = '')`;
+      } else if (filter.operator === 'isNull') {
+        condition = `${expression} IS NULL`;
+      } else if (filter.operator === 'contains') {
+        condition = `${expression} LIKE '%' + ${value} + '%'`;
+      } else if (filter.operator === 'startsWith') {
+        condition = `${expression} LIKE ${value} + '%'`;
+      } else if (filter.operator === 'endsWith') {
+        condition = `${expression} LIKE '%' + ${value}`;
+      } else if (filter.operator === 'between') {
+        condition = `${expression} BETWEEN ${value} AND ${valueTo}`;
+      } else {
+        condition = `${expression} ${operatorLabels[filter.operator]} ${value}`;
       }
 
-      if (filter.operator === 'contains') {
-        return `  ${expression} LIKE '%' + ${value} + '%'`;
-      }
-
-      return `  ${expression} ${operatorLabels[filter.operator]} ${value}`;
+      return `  ${filter.negate ? `NOT (${condition})` : condition}`;
     });
     const columnCriteriaLines = query.columns
       .map((column) => {

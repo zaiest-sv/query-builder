@@ -146,7 +146,7 @@
         }
 
         <div class="table-card__fields">
-          @for (field of visibleFieldsForTable(table); track field.id) {
+          @for (field of visibleFieldsByTableId().get(table.id) ?? []; track field.id) {
             <div
               #fieldRow
               class="canvas-field-row"
@@ -156,8 +156,12 @@
               [class.canvas-field-row--joined-left]="isFieldJoinedLeft(field.id)"
               [class.canvas-field-row--joined-right]="isFieldJoinedRight(field.id)"
               [class.canvas-field-row--join-source]="draggedJoinFieldId() === field.id"
-              [class.canvas-field-row--join-target]="canDropJoinOn(field.id)"
-              [class.canvas-field-row--join-blocked]="isJoinDropBlocked(field.id)"
+              [class.canvas-field-row--join-target]="
+                joinDropTargets().canDropFieldIds.has(field.id)
+              "
+              [class.canvas-field-row--join-blocked]="
+                joinDropTargets().blockedFieldIds.has(field.id)
+              "
               [attr.aria-label]="'Select field ' + field.label + '. Drag to create join.'"
               (click)="selectCanvasField(field.id, $event)"
               (pointerdown)="startJoinPointerDrag(field.id, $event)"
@@ -178,9 +182,9 @@
           }
         </div>
 
-        @if (joinsForTable(table.id).length > 0) {
+        @if ((joinsByTableId().get(table.id) ?? []).length > 0) {
           <footer class="join-list">
-            @for (join of joinsForTable(table.id); track join.id) {
+            @for (join of joinsByTableId().get(table.id) ?? []; track join.id) {
               <div
                 class="join-chip"
                 [class.join-chip--active]="isJoinActive(join.id)"

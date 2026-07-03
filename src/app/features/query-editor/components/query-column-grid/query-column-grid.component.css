@@ -7,7 +7,7 @@
 
 .column-grid-shell {
   display: grid;
-  grid-template-rows: 12px minmax(0, 1fr);
+  grid-template-rows: 10px minmax(0, 1fr);
   height: 100%;
   min-width: 0;
   min-height: 0;
@@ -29,8 +29,8 @@
 }
 
 .column-grid-resizer span {
-  width: 56px;
-  height: 4px;
+  width: 50px;
+  height: 3px;
   border-radius: 999px;
   background: #bac6d1;
 }
@@ -51,32 +51,32 @@
 .grid-row {
   display: grid;
   grid-template-columns:
-    72px minmax(220px, 1fr) minmax(150px, 220px) 116px 132px minmax(160px, 240px)
-    minmax(120px, 180px) minmax(120px, 180px) 134px;
+    62px minmax(190px, 1fr) minmax(140px, 190px) 96px 112px minmax(140px, 210px)
+    minmax(104px, 160px) minmax(104px, 160px) 110px;
   align-items: center;
-  min-width: 1320px;
+  min-width: 1160px;
 }
 
 .grid-heading {
   position: sticky;
   top: 0;
   z-index: 1;
-  min-height: 40px;
+  min-height: 34px;
   border-bottom: 1px solid var(--app-border);
   background: var(--app-grid-header);
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
 }
 
 .grid-heading span,
 .grid-row > * {
-  padding: 8px 10px;
+  padding: 6px 8px;
 }
 
 .grid-row {
-  min-height: 48px;
+  min-height: 40px;
   border-bottom: 1px solid var(--app-border);
   cursor: pointer;
 }
@@ -97,7 +97,7 @@
 .checkbox-cell {
   display: flex;
   justify-content: center;
-  min-height: 48px;
+  min-height: 40px;
 }
 
 .expression-cell {
@@ -109,16 +109,16 @@
 
 .text-editor-cell {
   display: block;
-  width: calc(100% - 20px);
+  width: calc(100% - 16px);
   min-width: 0;
-  min-height: 34px;
-  margin: 0 10px;
+  min-height: 30px;
+  margin: 0 8px;
   overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: 6px;
   background: #fff;
   color: var(--app-text);
-  padding: 6px 9px;
+  padding: 5px 8px;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -132,7 +132,7 @@
 .text-editor-cell.expression-cell {
   color: var(--app-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .inline-input,
@@ -140,12 +140,12 @@
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  min-height: 34px;
+  min-height: 30px;
   border: 1px solid var(--app-border);
   border-radius: 6px;
   background: #fff;
   color: var(--app-text);
-  padding: 6px 9px;
+  padding: 5px 8px;
 }
 
 .inline-input {
@@ -156,7 +156,7 @@
 .row-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -164,8 +164,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  min-height: 34px;
+  width: 30px;
+  min-height: 30px;
   padding: 0;
   border: 1px solid var(--app-border-strong);
   border-radius: 7px;
@@ -252,9 +252,9 @@ select:focus-visible {
 .grid-empty {
   display: flex;
   align-items: center;
-  min-width: 1320px;
-  min-height: 58px;
-  padding: 0 14px;
+  min-width: 1160px;
+  min-height: 48px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--app-border);
   color: var(--app-muted);
   font-size: 12px;

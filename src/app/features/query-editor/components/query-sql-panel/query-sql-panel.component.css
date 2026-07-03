@@ -18,7 +18,7 @@
 h2 {
   margin: 0;
   color: var(--app-text);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 720;
   line-height: 1.25;
   letter-spacing: 0;
@@ -36,8 +36,8 @@ small {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 10px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--app-border);
   background: var(--app-surface-subtle);
 }
@@ -45,13 +45,13 @@ small {
 .panel-heading span {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
-  padding: 0 8px;
+  min-height: 22px;
+  padding: 0 7px;
   border: 1px solid #c7dfdc;
   border-radius: 6px;
   background: var(--app-accent-soft);
   color: var(--app-accent-strong);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -67,8 +67,8 @@ small {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: 1px solid var(--app-border);
   border-radius: 6px;
   background: #fff;
@@ -86,9 +86,11 @@ pre {
   height: 100%;
   overflow: auto;
   margin: 0;
-  padding: 14px;
+  padding: 11px;
   border: 0;
   background: #16212f;
   color: #d8e8f7;
+  font-size: 11px;
+  line-height: 1.4;
   white-space: pre-wrap;
 }

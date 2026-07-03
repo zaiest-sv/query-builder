@@ -11,7 +11,7 @@
         [disabled]="store.serverValidation().status === 'checking'"
         (click)="runServerValidation()"
       >
-        Validate Server
+        Validate
       </button>
       <button
         class="button button--secondary"
@@ -19,7 +19,7 @@
         [disabled]="store.serverPreview().status === 'loading'"
         (click)="runServerPreview()"
       >
-        Preview Server
+        Preview
       </button>
     </div>
     <div
@@ -51,7 +51,7 @@
     <div class="panel-heading">
       <h2>SQL · {{ store.activeQueryLabel() }}</h2>
       <button class="button button--secondary" type="button" (click)="downloadSql()">
-        Download SQL
+        Download
       </button>
     </div>
     <pre class="sql-preview">{{ store.serverPreview().generatedSql || store.activeSql() }}</pre>

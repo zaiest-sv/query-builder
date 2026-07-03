@@ -721,6 +721,8 @@ function normalizeFilter(
     fieldId: field.id,
     operator: readFilterOperator(value['operator']),
     value: readString(value['value']),
+    ...(readString(value['valueTo']) ? { valueTo: readString(value['valueTo']) } : {}),
+    ...(typeof value['negate'] === 'boolean' ? { negate: value['negate'] } : {}),
     parameterName: parameterNames.has(parameterName) ? parameterName : '',
   };
 }
@@ -1173,9 +1175,15 @@ function readSortDirection(value: unknown): SortDirection {
 function readFilterOperator(value: unknown): FilterOperator {
   return value === 'notEquals' ||
     value === 'contains' ||
+    value === 'startsWith' ||
+    value === 'endsWith' ||
     value === 'greaterThan' ||
+    value === 'greaterThanOrEquals' ||
     value === 'lessThan' ||
-    value === 'isEmpty'
+    value === 'lessThanOrEquals' ||
+    value === 'isEmpty' ||
+    value === 'isNull' ||
+    value === 'between'
     ? value
     : 'equals';
 }

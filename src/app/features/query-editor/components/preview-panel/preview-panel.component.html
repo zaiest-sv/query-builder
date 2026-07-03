@@ -17,7 +17,7 @@
             {{ parameter.label }}
             @if (parameter.lookup?.enabled && !parameter.lookup?.multiple) {
               <select
-                [value]="parameter.defaultValue"
+                [value]="store.previewParameterValue(parameter)"
                 (change)="updateParameterValue(parameter.id, $event)"
               >
                 <option value="">empty</option>
@@ -28,7 +28,7 @@
             } @else {
               <input
                 [type]="parameterInputType(parameter)"
-                [value]="parameter.defaultValue"
+                [value]="store.previewParameterValue(parameter)"
                 (input)="updateParameterValue(parameter.id, $event)"
               />
             }
@@ -43,7 +43,7 @@
         [disabled]="store.serverPreview().status === 'loading'"
         (click)="runPreview()"
       >
-        Run Preview
+        Run
       </button>
       <button
         class="button button--secondary"
@@ -66,8 +66,8 @@
   </div>
 
   <div class="preview-summary">
-    <span>{{ store.activeFilteredSourceRows().length }} rows after prompted filters</span>
-    <span>{{ store.activePreviewSourceRows().length }} rows after column criteria</span>
+    <span>{{ store.activeFilteredSourceRows().length }} after prompts</span>
+    <span>{{ store.activePreviewSourceRows().length }} after criteria</span>
     <span>{{ store.activeQuery().filters.length }} filters</span>
     <span>{{ store.activeValidationIssues().length }} validation issues</span>
     <span>{{ store.serverValidation().message }}</span>

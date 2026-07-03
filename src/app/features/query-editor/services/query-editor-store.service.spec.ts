@@ -49,6 +49,7 @@ describe('QueryEditorStore join graph behavior', () => {
       providers: [{ provide: QUERY_EDITOR_API, useValue: api }],
     });
     store = TestBed.inject(QueryEditorStore);
+    store.loadReport(MOCK_REPORT.id);
   });
 
   afterEach(() => {
@@ -80,6 +81,65 @@ describe('QueryEditorStore join graph behavior', () => {
       },
     ]);
     expect(store.canvasSelection()).toEqual({ kind: 'join', joinId });
+  });
+
+  it('creates collision-safe ids against ids already loaded in the report', () => {
+    TestBed.resetTestingModule();
+    const reportWithCollision: ReportDefinition = {
+      ...cloneValue(MOCK_REPORT),
+      query: {
+        ...cloneValue(MOCK_REPORT.query),
+        columns: [
+          ...MOCK_REPORT.query.columns,
+          {
+            id: 'column-00000000-0000-4000-8000-000000000001',
+            fieldId: 'Diagnosis.DiagnosisCode',
+            expression: 'Diagnosis.DiagnosisCode',
+            alias: 'DiagnosisCode',
+            visible: true,
+            sortDirection: 'none',
+          },
+        ],
+      },
+    };
+    const randomUuidSpy = vi
+      .spyOn(globalThis.crypto, 'randomUUID')
+      .mockReturnValueOnce('00000000-0000-4000-8000-000000000001')
+      .mockReturnValueOnce('00000000-0000-4000-8000-000000000002');
+    const api: QueryEditorApi = {
+      loadReport: () =>
+        of({
+          metadata: cloneValue(DATA_SOURCE_GROUPS),
+          report: reportWithCollision,
+          rows: cloneValue(MOCK_ROWS),
+        }),
+      saveReport: (report: ReportDefinition) =>
+        of({
+          report: cloneValue(report),
+          savedAt: '2026-07-01T00:00:00.000Z',
+          message: 'Saved',
+        }),
+    };
+
+    TestBed.configureTestingModule({
+      providers: [{ provide: QUERY_EDITOR_API, useValue: api }],
+    });
+    const collisionStore = TestBed.inject(QueryEditorStore);
+    collisionStore.loadReport(MOCK_REPORT.id);
+    collisionStore.addColumn('Diagnosis.DiagnosisDescription');
+
+    expect(collisionStore.report().query.columns.map((column) => column.id)).toContain(
+      'column-00000000-0000-4000-8000-000000000002',
+    );
+    expect(
+      collisionStore
+        .report()
+        .query.columns.filter(
+          (column) => column.id === 'column-00000000-0000-4000-8000-000000000001',
+        ).length,
+    ).toBe(1);
+
+    randomUuidSpy.mockRestore();
   });
 
   it('marks the report dirty when selecting a new datasource table', () => {
@@ -131,6 +191,64 @@ describe('QueryEditorStore join graph behavior', () => {
     ]);
   });
 
+  it('keeps preview parameter values separate from parameter defaults and dirty state', () => {
+    TestBed.resetTestingModule();
+    const reportWithPrompt: ReportDefinition = {
+      ...cloneValue(MOCK_REPORT),
+      query: {
+        ...cloneValue(MOCK_REPORT.query),
+        filters: [
+          {
+            id: 'filter-status-runtime',
+            fieldId: 'Encounter.Status',
+            operator: 'equals',
+            value: '',
+            parameterName: 'Status',
+          },
+        ],
+        parameters: [
+          {
+            id: 'param-status',
+            name: 'Status',
+            label: 'Status',
+            type: 'string',
+            required: false,
+            defaultValue: 'Completed',
+          },
+        ],
+      },
+    };
+    const api: QueryEditorApi = {
+      loadReport: () =>
+        of({
+          metadata: cloneValue(DATA_SOURCE_GROUPS),
+          report: reportWithPrompt,
+          rows: cloneValue(MOCK_ROWS),
+        }),
+      saveReport: (report: ReportDefinition) =>
+        of({
+          report: cloneValue(report),
+          savedAt: '2026-07-01T00:00:00.000Z',
+          message: 'Saved',
+        }),
+    };
+
+    TestBed.configureTestingModule({
+      providers: [{ provide: QUERY_EDITOR_API, useValue: api }],
+    });
+    const runtimeStore = TestBed.inject(QueryEditorStore);
+    runtimeStore.loadReport(MOCK_REPORT.id);
+
+    runtimeStore.updatePreviewParameterValue('param-status', 'Pending');
+
+    expect(runtimeStore.isDirty()).toBe(false);
+    expect(runtimeStore.report().query.parameters[0]?.defaultValue).toBe('Completed');
+    expect(runtimeStore.activeFilteredSourceRows().map((row) => row['Encounter.Status'])).toEqual([
+      'Pending',
+      'Pending',
+    ]);
+  });
+
   it('runs server-style validation and preview through the API adapter', () => {
     store.validateOnServer();
     store.runServerPreview(2);
@@ -141,6 +259,64 @@ describe('QueryEditorStore join graph behavior', () => {
     expect(store.serverPreview().rows.length).toBe(2);
     expect(store.serverPreview().generatedSql).toContain('SELECT');
     expect(store.serverPreview().executionPlan).toContain('Mock execution plan');
+  });
+
+  it('blocks save on warning confirmation cancellation and saves after confirmation', () => {
+    TestBed.resetTestingModule();
+    let saveCalls = 0;
+    const warningReport: ReportDefinition = {
+      ...cloneValue(MOCK_REPORT),
+      crosstab: {
+        ...cloneValue(MOCK_REPORT.crosstab),
+        values: [
+          ...MOCK_REPORT.crosstab.values,
+          {
+            id: 'value-stale',
+            fieldId: 'missing-output-column',
+            label: 'Missing',
+            aggregation: 'count',
+          },
+        ],
+      },
+    };
+    const api: QueryEditorApi = {
+      loadReport: () =>
+        of({
+          metadata: cloneValue(DATA_SOURCE_GROUPS),
+          report: warningReport,
+          rows: cloneValue(MOCK_ROWS),
+        }),
+      saveReport: (report: ReportDefinition) => {
+        saveCalls += 1;
+
+        return of({
+          report: cloneValue(report),
+          savedAt: '2026-07-01T00:00:00.000Z',
+          message: 'Saved',
+        });
+      },
+    };
+
+    TestBed.configureTestingModule({
+      providers: [{ provide: QUERY_EDITOR_API, useValue: api }],
+    });
+    const warningStore = TestBed.inject(QueryEditorStore);
+    warningStore.loadReport(MOCK_REPORT.id);
+
+    expect(warningStore.validationErrors()).toEqual([]);
+    expect(warningStore.validationWarnings()).toEqual([
+      'Crosstab value Missing is not a Main query column.',
+    ]);
+
+    warningStore.save({ confirmWarnings: () => false });
+
+    expect(saveCalls).toBe(0);
+    expect(warningStore.saveState().status).toBe('invalid');
+
+    warningStore.save({ confirmWarnings: () => true });
+
+    expect(saveCalls).toBe(1);
+    expect(warningStore.saveState().status).toBe('saved');
   });
 
   it('renames prompt parameters without breaking filter bindings', () => {
@@ -655,6 +831,7 @@ describe('QueryEditorStore join graph behavior', () => {
       providers: [{ provide: QUERY_EDITOR_API, useValue: api }],
     });
     const invalidStore = TestBed.inject(QueryEditorStore);
+    invalidStore.loadReport(MOCK_REPORT.id);
 
     expect(invalidStore.crosstabConfigIssues()).toContain(
       'Encounters is not available in Main query output.',
@@ -719,6 +896,7 @@ describe('QueryEditorStore join graph behavior', () => {
       providers: [{ provide: QUERY_EDITOR_API, useValue: api }],
     });
     const invalidStore = TestBed.inject(QueryEditorStore);
+    invalidStore.loadReport(MOCK_REPORT.id);
 
     expect(invalidStore.validationIssues()).toContain(
       'Main query: joins join-encounter-patient-left, join-encounter-patient-inner connect the same datasource pair with conflicting join types (left, inner).',

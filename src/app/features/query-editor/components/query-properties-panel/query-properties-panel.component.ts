@@ -291,10 +291,22 @@ export class QueryPropertiesPanelComponent {
         return 'not equals';
       case 'greaterThan':
         return 'greater than';
+      case 'greaterThanOrEquals':
+        return 'greater than or equals';
       case 'lessThan':
         return 'less than';
+      case 'lessThanOrEquals':
+        return 'less than or equals';
       case 'isEmpty':
         return 'is empty';
+      case 'isNull':
+        return 'is null';
+      case 'startsWith':
+        return 'starts with';
+      case 'endsWith':
+        return 'ends with';
+      case 'between':
+        return 'between';
       case 'contains':
       case 'equals':
         return operator;

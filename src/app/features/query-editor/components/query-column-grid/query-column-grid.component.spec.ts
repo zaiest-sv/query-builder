@@ -32,6 +32,7 @@ describe('QueryColumnGridComponent', () => {
     }).compileComponents();
 
     store = TestBed.inject(QueryEditorStore);
+    store.loadReport(MOCK_REPORT.id);
     fixture = TestBed.createComponent(QueryColumnGridComponent);
     fixture.componentRef.setInput('gridHeight', 160);
     fixture.detectChanges();

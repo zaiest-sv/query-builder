@@ -8,7 +8,18 @@ export type QueryJoinOperator =
   'equals' | 'notEquals' | 'greaterThan' | 'greaterThanOrEquals' | 'lessThan' | 'lessThanOrEquals';
 
 export type FilterOperator =
-  'equals' | 'notEquals' | 'contains' | 'greaterThan' | 'lessThan' | 'isEmpty';
+  | 'equals'
+  | 'notEquals'
+  | 'contains'
+  | 'startsWith'
+  | 'endsWith'
+  | 'greaterThan'
+  | 'greaterThanOrEquals'
+  | 'lessThan'
+  | 'lessThanOrEquals'
+  | 'isEmpty'
+  | 'isNull'
+  | 'between';
 
 export type CrosstabAggregation = 'count' | 'sum' | 'avg' | 'min' | 'max';
 
@@ -67,6 +78,8 @@ export interface QueryFilter {
   readonly fieldId: string;
   readonly operator: FilterOperator;
   readonly value: string;
+  readonly valueTo?: string;
+  readonly negate?: boolean;
   readonly parameterName: string;
 }
 

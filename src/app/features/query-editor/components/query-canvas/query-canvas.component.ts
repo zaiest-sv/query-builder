@@ -16,7 +16,6 @@ import {
 } from '@angular/core';
 import {
   DataSourceField,
-  DataSourceTable,
   QueryJoinType,
 } from '../../models/report-definition.model';
 import {
@@ -122,6 +121,77 @@ export class QueryCanvasComponent implements AfterViewInit {
     }
 
     return sides;
+  });
+  protected readonly visibleFieldsByTableId = computed(() => {
+    const selectedFieldIds = this.store.selectedFieldIds();
+    const joinedFieldIds = this.store.joinedFieldIds();
+    const hiddenTableIds = this.hiddenUnusedTableIds();
+    const sortedTableIds = this.sortedTableIds();
+    const filterTerms = this.fieldFilterTerms();
+    const fieldsByTableId = new Map<string, readonly DataSourceField[]>();
+
+    for (const table of this.store.selectedTables()) {
+      let fields = [...table.fields];
+
+      if (hiddenTableIds.has(table.id)) {
+        fields = fields.filter(
+          (field) => selectedFieldIds.has(field.id) || joinedFieldIds.has(field.id),
+        );
+      }
+
+      const filterTerm = (filterTerms[table.id] ?? '').trim().toLowerCase();
+
+      if (filterTerm) {
+        fields = fields.filter(
+          (field) =>
+            field.name.toLowerCase().includes(filterTerm) ||
+            field.label.toLowerCase().includes(filterTerm) ||
+            field.type.toLowerCase().includes(filterTerm),
+        );
+      }
+
+      if (sortedTableIds.has(table.id)) {
+        fields.sort((first, second) => first.label.localeCompare(second.label));
+      }
+
+      fieldsByTableId.set(table.id, fields);
+    }
+
+    return fieldsByTableId;
+  });
+  protected readonly joinDropTargets = computed(() => {
+    const sourceFieldId = this.draggedJoinFieldId();
+    const targetFieldId = this.joinDragTargetFieldId();
+    const canDropFieldIds = new Set<string>();
+    const blockedFieldIds = new Set<string>();
+
+    if (!sourceFieldId) {
+      return { canDropFieldIds, blockedFieldIds };
+    }
+
+    for (const fields of this.visibleFieldsByTableId().values()) {
+      for (const field of fields) {
+        const assessment = this.store.assessJoinDrop(sourceFieldId, field.id);
+
+        if (assessment.canDrop) {
+          canDropFieldIds.add(field.id);
+        } else if (targetFieldId === field.id) {
+          blockedFieldIds.add(field.id);
+        }
+      }
+    }
+
+    return { canDropFieldIds, blockedFieldIds };
+  });
+  protected readonly joinsByTableId = computed(() => {
+    const joinsByTableId = new Map<string, CanvasJoin[]>();
+
+    for (const join of this.store.canvasJoins()) {
+      appendJoinForTable(joinsByTableId, join.fromTableId, join);
+      appendJoinForTable(joinsByTableId, join.toTableId, join);
+    }
+
+    return joinsByTableId;
   });
   protected readonly joinLayerWidth = signal(980);
   protected readonly joinLayerHeight = signal(320);
@@ -229,34 +299,6 @@ export class QueryCanvasComponent implements AfterViewInit {
 
   protected toggleSortFields(tableId: string): void {
     this.toggleTableSet(this.sortedTableIds, tableId);
-  }
-
-  protected visibleFieldsForTable(table: DataSourceTable): readonly DataSourceField[] {
-    let fields = [...table.fields];
-
-    if (this.hiddenUnusedTableIds().has(table.id)) {
-      fields = fields.filter(
-        (field) =>
-          this.store.selectedFieldIds().has(field.id) || this.store.joinedFieldIds().has(field.id),
-      );
-    }
-
-    const filterTerm = this.fieldFilterTerm(table.id).trim().toLowerCase();
-
-    if (filterTerm) {
-      fields = fields.filter(
-        (field) =>
-          field.name.toLowerCase().includes(filterTerm) ||
-          field.label.toLowerCase().includes(filterTerm) ||
-          field.type.toLowerCase().includes(filterTerm),
-      );
-    }
-
-    if (this.sortedTableIds().has(table.id)) {
-      fields.sort((first, second) => first.label.localeCompare(second.label));
-    }
-
-    return fields;
   }
 
   protected fieldFilterTerm(tableId: string): string {
@@ -382,28 +424,6 @@ export class QueryCanvasComponent implements AfterViewInit {
     this.pointerUpListener = (upEvent) => this.completeJoinPointerDrag(upEvent);
     this.document.addEventListener('pointermove', this.pointerMoveListener);
     this.document.addEventListener('pointerup', this.pointerUpListener, { once: true });
-  }
-
-  protected canDropJoinOn(fieldId: string): boolean {
-    const sourceFieldId = this.draggedJoinFieldId();
-
-    return sourceFieldId ? this.store.assessJoinDrop(sourceFieldId, fieldId).canDrop : false;
-  }
-
-  protected isJoinDropBlocked(fieldId: string): boolean {
-    const sourceFieldId = this.draggedJoinFieldId();
-
-    return (
-      this.joinDragTargetFieldId() === fieldId &&
-      sourceFieldId !== null &&
-      !this.store.assessJoinDrop(sourceFieldId, fieldId).canDrop
-    );
-  }
-
-  protected joinsForTable(tableId: string): readonly CanvasJoin[] {
-    return this.store
-      .canvasJoins()
-      .filter((join) => join.fromTableId === tableId || join.toTableId === tableId);
   }
 
   protected selectJoin(joinId: string, event: MouseEvent): void {
@@ -708,6 +728,18 @@ function createJoinPaths(
       ),
     )
     .filter((path): path is JoinPath => path !== null);
+}
+
+function appendJoinForTable(
+  joinsByTableId: Map<string, CanvasJoin[]>,
+  tableId: string,
+  join: CanvasJoin,
+): void {
+  const joins = joinsByTableId.get(tableId) ?? [];
+
+  if (!joins.some((currentJoin) => currentJoin.id === join.id)) {
+    joinsByTableId.set(tableId, [...joins, join]);
+  }
 }
 
 function createJoinPathForCondition(

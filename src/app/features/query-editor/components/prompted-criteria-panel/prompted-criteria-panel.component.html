@@ -28,15 +28,15 @@
         [disabled]="!activeFilterFieldId()"
         (click)="addDynamicCriteria()"
       >
-        + Dynamic Criteria
+        + Dynamic
       </button>
     </div>
 
     <div class="filter-list">
       @if (store.activeQuery().filters.length === 0) {
         <div class="criteria-empty">
-          <h3>No prompted filters</h3>
-          <p>Add a filter to limit preview rows or expose a prompt parameter.</p>
+          <h3>No filters</h3>
+          <p>Add a filter or prompt parameter.</p>
         </div>
       } @else {
         <div class="filter-list__header">
@@ -64,14 +64,26 @@
                 <option [value]="operator">{{ operator }}</option>
               }
             </select>
-            <input
-              [type]="filterValueInputType(filter)"
-              [value]="filter.value"
-              [disabled]="filter.parameterName || filter.operator === 'isEmpty'"
-              (input)="updateFilterValue(filter.id, $event)"
-              aria-label="Filter value"
-              placeholder="Literal value"
-            />
+            <div class="prompt-binding">
+              <input
+                [type]="filterValueInputType(filter)"
+                [value]="filter.value"
+                [disabled]="filter.parameterName || !filterUsesValue(filter)"
+                (input)="updateFilterValue(filter.id, $event)"
+                aria-label="Filter value"
+                placeholder="Literal value"
+              />
+              @if (filter.operator === 'between') {
+                <input
+                  [type]="filterValueInputType(filter)"
+                  [value]="filter.valueTo || ''"
+                  [disabled]="filter.parameterName"
+                  (input)="updateFilterValueTo(filter.id, $event)"
+                  aria-label="Filter second value"
+                  placeholder="And value"
+                />
+              }
+            </div>
             <div class="prompt-binding">
               <select
                 [value]="filter.parameterName"
@@ -93,13 +105,21 @@
               }
             </div>
             <div class="filter-actions">
+              <label class="toggle-inline">
+                <input
+                  type="checkbox"
+                  [checked]="filter.negate === true"
+                  (change)="updateFilterNegate(filter.id, $event)"
+                />
+                Not
+              </label>
               <button
                 class="button button--secondary"
                 type="button"
                 [disabled]="filter.parameterName"
                 (click)="addParameterForFilter(filter.id)"
               >
-                + Prompt
+                Prompt
               </button>
               <button
                 class="icon-button icon-button--danger"
@@ -127,8 +147,8 @@
     <div class="parameter-list">
       @if (store.activeQuery().parameters.length === 0) {
         <div class="criteria-empty">
-          <h3>No prompt parameters</h3>
-          <p>Create a prompt from a filter or add one manually.</p>
+          <h3>No parameters</h3>
+          <p>Create from a filter or add manually.</p>
         </div>
       } @else {
         <section class="parameter-group">
@@ -158,7 +178,7 @@
     </div>
     <div class="parameters-footer">
       <span>{{ store.activeQuery().parameters.length }} prompts</span>
-      <span>{{ store.activeFilteredSourceRows().length }} preview rows after prompts</span>
+      <span>{{ store.activeFilteredSourceRows().length }} rows after prompts</span>
     </div>
   </aside>
 </section>

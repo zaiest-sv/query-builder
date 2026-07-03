@@ -45,6 +45,7 @@ export class QueryPreviewService {
     rows: readonly DataRecord[],
     filters: readonly QueryFilter[],
     parameters: readonly QueryParameter[],
+    parameterValues: Readonly<Record<string, string>> = {},
   ): readonly DataRecord[] {
     const parameterLookup = new Map(parameters.map((parameter) => [parameter.name, parameter]));
 
@@ -52,26 +53,58 @@ export class QueryPreviewService {
       filters.every((filter) => {
         const value = row[filter.fieldId];
         const filterValue =
-          filter.operator === 'isEmpty'
+          filter.operator === 'isEmpty' || filter.operator === 'isNull'
             ? ''
-            : (parameterLookup.get(filter.parameterName)?.defaultValue ?? filter.value);
+            : (parameterValues[filter.parameterName] ??
+              parameterLookup.get(filter.parameterName)?.defaultValue ??
+              filter.value);
+        const filterValueTo = filter.valueTo ?? '';
+        let matches = false;
 
         switch (filter.operator) {
           case 'equals':
-            return String(value ?? '').toLowerCase() === filterValue.toLowerCase();
+            matches = String(value ?? '').toLowerCase() === filterValue.toLowerCase();
+            break;
           case 'notEquals':
-            return String(value ?? '').toLowerCase() !== filterValue.toLowerCase();
+            matches = String(value ?? '').toLowerCase() !== filterValue.toLowerCase();
+            break;
           case 'contains':
-            return String(value ?? '')
+            matches = String(value ?? '')
               .toLowerCase()
               .includes(filterValue.toLowerCase());
+            break;
+          case 'startsWith':
+            matches = String(value ?? '').toLowerCase().startsWith(filterValue.toLowerCase());
+            break;
+          case 'endsWith':
+            matches = String(value ?? '').toLowerCase().endsWith(filterValue.toLowerCase());
+            break;
           case 'greaterThan':
-            return Number(value) > Number(filterValue);
+            matches = Number(value) > Number(filterValue);
+            break;
+          case 'greaterThanOrEquals':
+            matches = Number(value) >= Number(filterValue);
+            break;
           case 'lessThan':
-            return Number(value) < Number(filterValue);
+            matches = Number(value) < Number(filterValue);
+            break;
+          case 'lessThanOrEquals':
+            matches = Number(value) <= Number(filterValue);
+            break;
           case 'isEmpty':
-            return value === null || value === '';
+            matches = value === null || value === '';
+            break;
+          case 'isNull':
+            matches = value === null;
+            break;
+          case 'between':
+            matches =
+              compareCellValues(value, filterValue) >= 0 &&
+              compareCellValues(value, filterValueTo) <= 0;
+            break;
         }
+
+        return filter.negate ? !matches : matches;
       }),
     );
   }

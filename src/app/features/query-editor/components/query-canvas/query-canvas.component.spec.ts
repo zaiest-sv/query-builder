@@ -31,6 +31,7 @@ describe('QueryCanvasComponent', () => {
       providers: [{ provide: QUERY_EDITOR_API, useValue: api }],
     }).compileComponents();
 
+    TestBed.inject(QueryEditorStore).loadReport(MOCK_REPORT.id);
     fixture = TestBed.createComponent(QueryCanvasComponent);
     fixture.detectChanges();
     await fixture.whenStable();

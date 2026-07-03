@@ -24,7 +24,7 @@ p {
 
 h2 {
   color: var(--app-text);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 720;
   line-height: 1.25;
 }
@@ -48,8 +48,8 @@ select:focus-visible,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 10px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--app-border);
   background: var(--app-surface-subtle);
 }
@@ -79,8 +79,8 @@ select:focus-visible,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: 1px solid var(--app-border);
   border-radius: 6px;
   background: #fff;
@@ -91,16 +91,16 @@ select:focus-visible,
 .properties-body {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 9px;
   min-height: 0;
-  padding: 12px;
+  padding: 9px;
   overflow: auto;
 }
 
 .property-section {
   display: grid;
-  gap: 10px;
-  padding-bottom: 12px;
+  gap: 8px;
+  padding-bottom: 9px;
   border-bottom: 1px solid var(--app-border);
 }
 
@@ -139,8 +139,8 @@ select:focus-visible,
 
 .property-grid {
   display: grid;
-  grid-template-columns: minmax(78px, auto) minmax(0, 1fr);
-  gap: 7px 10px;
+  grid-template-columns: minmax(70px, auto) minmax(0, 1fr);
+  gap: 6px 8px;
   align-items: center;
 }
 
@@ -164,21 +164,21 @@ select:focus-visible,
 
 .join-list {
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 
 .column-list {
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 
 .column-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
+  grid-template-columns: minmax(0, 1fr) 26px;
   align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 6px 8px;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 7px;
   border: 1px solid var(--app-border);
   border-radius: 6px;
   background: #fff;
@@ -209,8 +209,8 @@ select:focus-visible,
 }
 
 .column-row button {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: 1px solid var(--app-border);
   border-radius: 6px;
   background: #fff;
@@ -220,11 +220,11 @@ select:focus-visible,
 
 .join-row {
   display: grid;
-  grid-template-columns: 52px 26px minmax(0, 1fr);
+  grid-template-columns: 48px 24px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 6px 8px;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 7px;
   border: 1px solid var(--app-border);
   border-radius: 6px;
   background: #fff;
@@ -285,13 +285,13 @@ select:focus-visible,
   display: block;
   width: 100%;
   min-width: 0;
-  min-height: 34px;
+  min-height: 30px;
   overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: 6px;
   background: #fff;
   color: var(--app-text);
-  padding: 6px 9px;
+  padding: 5px 8px;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -305,26 +305,26 @@ select:focus-visible,
 .split-input-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 
 .action-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .condition-list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .condition-row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 30px;
-  gap: 8px;
+  grid-template-columns: 22px minmax(0, 1fr) 28px;
+  gap: 6px;
   align-items: start;
-  padding: 8px;
+  padding: 6px;
   border: 1px solid var(--app-border);
   border-radius: 7px;
   background: #fff;
@@ -370,8 +370,8 @@ select:focus-visible,
   grid-row: 1;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: 1px solid var(--app-border);
   border-radius: 6px;
   background: #fff;
@@ -424,12 +424,12 @@ input,
 select {
   width: 100%;
   min-width: 0;
-  min-height: 34px;
+  min-height: 30px;
   border: 1px solid var(--app-border);
   border-radius: 6px;
   background: #fff;
   color: var(--app-text);
-  padding: 6px 9px;
+  padding: 5px 8px;
 }
 
 input:disabled {
@@ -442,7 +442,7 @@ input:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 34px;
+  min-height: 30px;
 }
 
 .toggle-row input {
@@ -452,13 +452,13 @@ input:disabled {
 
 .filter-list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .filter-card {
   display: grid;
-  gap: 8px;
-  padding: 8px;
+  gap: 6px;
+  padding: 6px;
   border: 1px solid var(--app-border);
   border-radius: 7px;
   background: #fff;
@@ -476,7 +476,7 @@ code {
 }
 
 .secondary-button {
-  min-height: 34px;
+  min-height: 30px;
   border: 1px solid var(--app-border);
   border-radius: 7px;
   background: #fff;
@@ -501,7 +501,7 @@ code {
 }
 
 .danger-button {
-  min-height: 34px;
+  min-height: 30px;
   border: 1px solid #e3b7b2;
   border-radius: 7px;
   background: #fff5f4;
