@@ -1,3 +1,4 @@
+import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import {
   DataSourceField,
@@ -20,6 +21,7 @@ const fieldTypes: readonly FieldType[] = ['string', 'number', 'date', 'boolean']
 
 @Component({
   selector: 'app-prompted-criteria-panel',
+  imports: [NgTemplateOutlet],
   templateUrl: './prompted-criteria-panel.component.html',
   styleUrl: '../../query-editor.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -37,6 +39,12 @@ export class PromptedCriteriaPanelComponent {
       ? selectedFieldId
       : (fields[0]?.id ?? '');
   });
+  protected readonly staticParameters = computed(() =>
+    this.store.activeQuery().parameters.filter((parameter) => parameter.kind !== 'dynamic'),
+  );
+  protected readonly dynamicParameters = computed(() =>
+    this.store.activeQuery().parameters.filter((parameter) => parameter.kind === 'dynamic'),
+  );
 
   protected setFilterField(event: Event): void {
     this.filterFieldId.set(readControlValue(event));
@@ -47,6 +55,14 @@ export class PromptedCriteriaPanelComponent {
 
     if (fieldId) {
       this.store.addFilter(fieldId);
+    }
+  }
+
+  protected addDynamicCriteria(): void {
+    const fieldId = this.activeFilterFieldId();
+
+    if (fieldId) {
+      this.store.addDynamicCriteria(fieldId);
     }
   }
 
@@ -82,12 +98,35 @@ export class PromptedCriteriaPanelComponent {
     this.store.updateParameterType(parameterId, readControlValue(event) as FieldType);
   }
 
+  protected updateParameterKind(parameterId: string, event: Event): void {
+    this.store.updateParameterKind(
+      parameterId,
+      readControlValue(event) === 'dynamic' ? 'dynamic' : 'static',
+    );
+  }
+
+  protected updateParameterSourceField(parameterId: string, event: Event): void {
+    this.store.updateParameterSourceField(parameterId, readControlValue(event));
+  }
+
   protected updateParameterRequired(parameterId: string, event: Event): void {
     this.store.updateParameterRequired(parameterId, readCheckedValue(event));
   }
 
   protected updateParameterDefaultValue(parameterId: string, event: Event): void {
     this.store.updateParameterDefaultValue(parameterId, readControlValue(event));
+  }
+
+  protected updateParameterLookupEnabled(parameterId: string, event: Event): void {
+    this.store.updateParameterLookupEnabled(parameterId, readCheckedValue(event));
+  }
+
+  protected updateParameterLookupMultiple(parameterId: string, event: Event): void {
+    this.store.updateParameterLookupMultiple(parameterId, readCheckedValue(event));
+  }
+
+  protected updateParameterLookupOptions(parameterId: string, event: Event): void {
+    this.store.updateParameterLookupOptions(parameterId, readControlValue(event));
   }
 
   protected removeParameter(parameterId: string): void {
@@ -122,6 +161,16 @@ export class PromptedCriteriaPanelComponent {
 
   protected fieldForColumn(fieldId: string): DataSourceField | null {
     return this.store.fieldLookup().get(fieldId) ?? null;
+  }
+
+  protected lookupOptionsText(parameter: QueryParameter): string {
+    return parameter.lookup?.options.join('\n') ?? '';
+  }
+
+  protected sourceFieldLabel(parameter: QueryParameter): string {
+    return parameter.sourceFieldId
+      ? (this.store.fieldLookup().get(parameter.sourceFieldId)?.label ?? parameter.sourceFieldId)
+      : 'No source field';
   }
 }
 

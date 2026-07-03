@@ -1,0 +1,137 @@
+:host {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: block;
+}
+
+.modal-backdrop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.editor-modal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(720px, 100%);
+  max-height: min(680px, 100%);
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 72px rgba(15, 23, 42, 0.22);
+  overflow: hidden;
+}
+
+header,
+footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--app-surface-subtle);
+}
+
+header {
+  border-bottom: 1px solid var(--app-border);
+}
+
+footer {
+  justify-content: flex-end;
+  border-top: 1px solid var(--app-border);
+}
+
+h2,
+p {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+h2 {
+  color: var(--app-text);
+  font-size: 16px;
+  font-weight: 780;
+  line-height: 1.25;
+}
+
+p {
+  margin-top: 3px;
+  color: var(--app-muted);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+header button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--app-muted);
+  font-weight: 820;
+}
+
+label {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  padding: 16px;
+  color: var(--app-muted);
+  font-size: 12px;
+  font-weight: 780;
+}
+
+textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 260px;
+  resize: vertical;
+  border: 1px solid var(--app-border-strong);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--app-text);
+  padding: 11px 12px;
+  font:
+    13px/1.55 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    'Liberation Mono',
+    monospace;
+  letter-spacing: 0;
+}
+
+button:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+.primary-button,
+.secondary-button {
+  min-height: 34px;
+  border-radius: 7px;
+  padding: 0 13px;
+  font-weight: 760;
+}
+
+.primary-button {
+  border: 1px solid var(--app-accent);
+  background: var(--app-accent);
+  color: #fff;
+}
+
+.secondary-button {
+  border: 1px solid var(--app-border-strong);
+  background: #fff;
+  color: var(--app-text);
+}

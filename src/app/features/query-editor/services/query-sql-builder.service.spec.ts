@@ -51,6 +51,28 @@ describe('QuerySqlBuilderService', () => {
     expect(sql).toContain('[ledger].[Balance] > 10');
   });
 
+  it('uses custom column expressions instead of forcing field references', () => {
+    const report: ReportDefinition = {
+      ...MOCK_REPORT,
+      query: {
+        ...MOCK_REPORT.query,
+        columns: MOCK_REPORT.query.columns.map((column) =>
+          column.id === 'column-provider'
+            ? {
+                ...column,
+                expression: 'UPPER([encounter].[Provider])',
+                alias: 'ProviderUpper',
+              }
+            : column,
+        ),
+      },
+    };
+    const sql = service.build(report, tableLookup, fieldLookup);
+
+    expect(sql).toContain('UPPER([encounter].[Provider]) AS [ProviderUpper]');
+    expect(sql).not.toContain('[encounter].[Provider] AS [ProviderUpper]');
+  });
+
   it('builds SQL from column criteria, OR criteria, and grouping flags', () => {
     const report: ReportDefinition = {
       ...MOCK_REPORT,
@@ -104,6 +126,92 @@ describe('QuerySqlBuilderService', () => {
     expect(sql).toContain(
       'LEFT JOIN [dbo].[Patient] AS [patient] ON [encounter].[PatientId] = [patient].[PatientId] AND [encounter].[Minutes] = [patient].[Gender]',
     );
+  });
+
+  it('combines duplicate same-type table-pair join objects into one SQL join', () => {
+    const report: ReportDefinition = {
+      ...MOCK_REPORT,
+      query: {
+        ...MOCK_REPORT.query,
+        sourceTableIds: ['Encounter', 'Patient'],
+        joins: [
+          {
+            id: 'join-encounter-patient',
+            type: 'left',
+            conditions: [
+              {
+                id: 'join-encounter-patient-condition-1',
+                fromFieldId: 'Encounter.PatientId',
+                operator: 'equals',
+                toFieldId: 'Patient.PatientId',
+              },
+            ],
+          },
+          {
+            id: 'join-encounter-patient-extra',
+            type: 'left',
+            conditions: [
+              {
+                id: 'join-encounter-patient-condition-2',
+                fromFieldId: 'Encounter.Minutes',
+                operator: 'equals',
+                toFieldId: 'Patient.Gender',
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const sql = service.build(report, tableLookup, fieldLookup);
+
+    expect(sql.match(/JOIN \[dbo\]\.\[Patient\]/g)?.length).toBe(1);
+    expect(sql).toContain(
+      'LEFT JOIN [dbo].[Patient] AS [patient] ON [encounter].[PatientId] = [patient].[PatientId] AND [encounter].[Minutes] = [patient].[Gender]',
+    );
+  });
+
+  it('does not silently merge conflicting table-pair join types', () => {
+    const report: ReportDefinition = {
+      ...MOCK_REPORT,
+      query: {
+        ...MOCK_REPORT.query,
+        sourceTableIds: ['Encounter', 'Patient'],
+        joins: [
+          {
+            id: 'join-encounter-patient-left',
+            type: 'left',
+            conditions: [
+              {
+                id: 'join-encounter-patient-left-condition',
+                fromFieldId: 'Encounter.PatientId',
+                operator: 'equals',
+                toFieldId: 'Patient.PatientId',
+              },
+            ],
+          },
+          {
+            id: 'join-encounter-patient-inner',
+            type: 'inner',
+            conditions: [
+              {
+                id: 'join-encounter-patient-inner-condition',
+                fromFieldId: 'Encounter.Minutes',
+                operator: 'equals',
+                toFieldId: 'Patient.Gender',
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const sql = service.build(report, tableLookup, fieldLookup);
+
+    expect(sql).toContain(
+      '/* Invalid join: conflicting join types between the same datasource pair (join-encounter-patient-left, join-encounter-patient-inner) */',
+    );
+    expect(sql).toContain('CROSS JOIN [dbo].[Patient] AS [patient]');
+    expect(sql).not.toContain('LEFT JOIN [dbo].[Patient] AS [patient]');
+    expect(sql).not.toContain('INNER JOIN [dbo].[Patient] AS [patient]');
   });
 
   it('uses configured operators in join conditions', () => {

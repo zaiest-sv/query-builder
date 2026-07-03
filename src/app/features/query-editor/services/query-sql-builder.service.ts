@@ -12,6 +12,7 @@ import {
   QueryDocument,
   ReportDefinition,
 } from '../models/report-definition.model';
+import { findConflictingJoinPairIds } from './query-join-graph.service';
 
 const operatorLabels: Readonly<Record<Exclude<FilterOperator, 'contains' | 'isEmpty'>, string>> = {
   equals: '=',
@@ -53,7 +54,7 @@ export class QuerySqlBuilderService {
         : selectedColumns.map((column) => {
             const field = fieldLookup.get(column.fieldId);
             const expression = field
-              ? this.createFieldExpression(field, tableLookup)
+              ? this.createColumnExpression(column.expression, field, tableLookup)
               : column.expression;
 
             return `  ${expression} AS ${quoteIdentifier(column.alias)}`;
@@ -102,7 +103,7 @@ export class QuerySqlBuilderService {
       .map((column) => {
         const field = fieldLookup.get(column.fieldId);
         const expression = field
-          ? this.createFieldExpression(field, tableLookup)
+          ? this.createColumnExpression(column.expression, field, tableLookup)
           : column.expression;
         const criteria = [column.criteria, ...(column.orCriteria ?? [])]
           .map((value) =>
@@ -122,7 +123,9 @@ export class QuerySqlBuilderService {
       .map((column) => {
         const field = fieldLookup.get(column.fieldId);
 
-        return field ? this.createFieldExpression(field, tableLookup) : column.expression;
+        return field
+          ? this.createColumnExpression(column.expression, field, tableLookup)
+          : column.expression;
       });
     const orderLines = query.columns
       .filter((column) => column.sortDirection !== 'none')
@@ -193,6 +196,16 @@ export class QuerySqlBuilderService {
     return `${quoteIdentifier(tableAlias)}.${quoteIdentifier(field.name)}`;
   }
 
+  private createColumnExpression(
+    expression: string,
+    field: DataSourceField,
+    tableLookup: ReadonlyMap<string, DataSourceTable>,
+  ): string {
+    return isDefaultFieldExpression(expression, field)
+      ? this.createFieldExpression(field, tableLookup)
+      : expression.trim();
+  }
+
   private createJoinLines(
     tables: readonly DataSourceTable[],
     joins: readonly QueryJoin[],
@@ -261,6 +274,21 @@ export class QuerySqlBuilderService {
     fieldLookup: ReadonlyMap<string, DataSourceField>,
     visitedSubqueryIds: ReadonlySet<string>,
   ): string {
+    const conflictingJoinIds = findConflictingJoinPairIds(joins, fieldLookup);
+
+    if (conflictingJoinIds.size > 0) {
+      return [
+        `/* Invalid join: conflicting join types between the same datasource pair (${Array.from(conflictingJoinIds).join(', ')}) */`,
+        `CROSS JOIN ${this.createTableExpression(
+          table,
+          report,
+          tableLookup,
+          fieldLookup,
+          visitedSubqueryIds,
+        )}`,
+      ].join('\n');
+    }
+
     const joinType = joins.find((join) => join.type !== 'cross')?.type ?? 'cross';
 
     if (joinType === 'cross') {
@@ -376,6 +404,22 @@ function formatSqlValue(value: string, fieldType: FieldType): string {
 
 function quoteString(value: CellValue): string {
   return `'${String(value ?? '').replaceAll("'", "''")}'`;
+}
+
+function isDefaultFieldExpression(expression: string, field: DataSourceField): boolean {
+  const normalizedExpression = expression
+    .trim()
+    .replaceAll('[', '')
+    .replaceAll(']', '')
+    .toLowerCase();
+  const defaultExpressions = new Set([
+    field.expression.toLowerCase(),
+    field.id.toLowerCase(),
+    `${field.tableId}.${field.name}`.toLowerCase(),
+    field.name.toLowerCase(),
+  ]);
+
+  return defaultExpressions.has(normalizedExpression);
 }
 
 function createCriteriaExpression(

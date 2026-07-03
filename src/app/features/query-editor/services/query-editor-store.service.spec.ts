@@ -22,6 +22,27 @@ describe('QueryEditorStore join graph behavior', () => {
           savedAt: '2026-07-01T00:00:00.000Z',
           message: 'Saved',
         }),
+      validateReport: () =>
+        of({
+          status: 'valid',
+          issues: [],
+          checkedAt: '2026-07-01T00:00:00.000Z',
+          message: 'Server validation passed',
+        }),
+      previewReport: (request) =>
+        of({
+          status: 'ready',
+          columns: request.report.query.columns.filter((column) => column.visible),
+          rows: [
+            { id: 'server-row-1', cells: { 'column-provider': 'Dr. Harper' } },
+            { id: 'server-row-2', cells: { 'column-provider': 'Dr. Nguyen' } },
+          ],
+          issues: [],
+          generatedSql: 'SELECT server_preview',
+          executionPlan: 'Mock execution plan',
+          executedAt: '2026-07-01T00:00:00.000Z',
+          message: 'Server preview returned 2 rows',
+        }),
     };
 
     TestBed.configureTestingModule({
@@ -110,6 +131,18 @@ describe('QueryEditorStore join graph behavior', () => {
     ]);
   });
 
+  it('runs server-style validation and preview through the API adapter', () => {
+    store.validateOnServer();
+    store.runServerPreview(2);
+
+    expect(store.serverValidation().status).toBe('valid');
+    expect(store.serverValidation().issues).toEqual([]);
+    expect(store.serverPreview().status).toBe('ready');
+    expect(store.serverPreview().rows.length).toBe(2);
+    expect(store.serverPreview().generatedSql).toContain('SELECT');
+    expect(store.serverPreview().executionPlan).toContain('Mock execution plan');
+  });
+
   it('renames prompt parameters without breaking filter bindings', () => {
     store.addParameterForFilter('filter-status');
     const parameter = store
@@ -134,6 +167,63 @@ describe('QueryEditorStore join graph behavior', () => {
     expect(
       store.report().query.filters.find((filter) => filter.id === 'filter-status')?.parameterName,
     ).toBe('');
+  });
+
+  it('creates dynamic criteria with lookup options and prevents duplicate source prompts', () => {
+    store.addDynamicCriteria('Encounter.Provider');
+    store.addDynamicCriteria('Encounter.Provider');
+
+    const dynamicParameters = store
+      .activeQuery()
+      .parameters.filter(
+        (parameter) =>
+          parameter.kind === 'dynamic' && parameter.sourceFieldId === 'Encounter.Provider',
+      );
+    const dynamicFilter = store
+      .activeQuery()
+      .filters.find(
+        (filter) =>
+          filter.fieldId === 'Encounter.Provider' &&
+          filter.parameterName === dynamicParameters[0]?.name,
+      );
+
+    expect(dynamicParameters.length).toBe(1);
+    expect(dynamicParameters[0]?.lookup).toEqual({
+      enabled: true,
+      multiple: false,
+      options: ['Dr. Harper', 'Dr. Nguyen', 'Dr. Ramos'],
+    });
+    expect(dynamicFilter).toEqual(
+      expect.objectContaining({
+        fieldId: 'Encounter.Provider',
+        operator: 'equals',
+        value: '',
+      }),
+    );
+  });
+
+  it('validates dynamic criteria source typing and lookup constraints', () => {
+    store.addDynamicCriteria('Encounter.Provider');
+    const parameter = store
+      .activeQuery()
+      .parameters.find(
+        (currentParameter) =>
+          currentParameter.kind === 'dynamic' &&
+          currentParameter.sourceFieldId === 'Encounter.Provider',
+      );
+
+    store.updateParameterDefaultValue(parameter?.id ?? '', 'Dr. Missing');
+
+    expect(store.activeValidationIssues()).toContain(
+      'Main query: lookup parameter Provider has values outside allowed options (Dr. Missing).',
+    );
+
+    store.updateParameterDefaultValue(parameter?.id ?? '', 'Dr. Harper');
+    store.updateParameterType(parameter?.id ?? '', 'number');
+
+    expect(store.activeValidationIssues()).toContain(
+      'Main query: dynamic parameter Provider type must match Provider.',
+    );
   });
 
   it('keeps prompted criteria scoped to the active subquery workspace', () => {
@@ -232,6 +322,109 @@ describe('QueryEditorStore join graph behavior', () => {
     expect(updatedSubquery?.alias).toBe('Billing_Rollup_2026');
     expect(subqueryTable?.label).toBe('Billing Rollup');
     expect(subqueryTable?.alias).toBe('Billing_Rollup_2026');
+  });
+
+  it('prevents duplicate subquery names and aliases', () => {
+    store.addSubquery();
+    const firstSubquery = store.report().subqueries[0];
+    store.addSubquery();
+    const secondSubquery = store.report().subqueries[1];
+
+    store.updateSubqueryName(secondSubquery?.id ?? '', firstSubquery?.name ?? '');
+    store.updateSubqueryAlias(secondSubquery?.id ?? '', firstSubquery?.alias ?? '');
+
+    const updatedSecondSubquery = store.report().subqueries[1];
+
+    expect(updatedSecondSubquery?.name).toBe(secondSubquery?.name);
+    expect(updatedSecondSubquery?.alias).toBe(secondSubquery?.alias);
+  });
+
+  it('copies subqueries with unique ids, names, aliases, and settings', () => {
+    store.addSubquery();
+    const sourceSubquery = store.report().subqueries[0];
+
+    store.updateSubqueryName(sourceSubquery?.id ?? '', 'Diagnosis Output');
+    store.updateSubqueryAlias(sourceSubquery?.id ?? '', 'diag_output');
+    store.updateSubqueryDescription(sourceSubquery?.id ?? '', 'Reusable diagnosis output');
+    store.updateSubqueryPreviewLimit(sourceSubquery?.id ?? '', 25);
+    store.selectTable('Diagnosis');
+    store.addColumn('Diagnosis.DiagnosisCode');
+    const sourceColumnId = store.activeQuery().columns[0]?.id;
+
+    store.copySubquery(sourceSubquery?.id ?? '');
+
+    const copiedSubquery = store.report().subqueries[1];
+
+    expect(copiedSubquery?.id).not.toBe(sourceSubquery?.id);
+    expect(copiedSubquery?.name).toBe('Diagnosis Output Copy');
+    expect(copiedSubquery?.alias).toBe('diag_output_copy');
+    expect(copiedSubquery?.description).toBe('Reusable diagnosis output');
+    expect(copiedSubquery?.settings?.previewLimit).toBe(25);
+    expect(copiedSubquery?.query.columns[0]?.id).not.toBe(sourceColumnId);
+    expect(copiedSubquery?.query.columns[0]?.fieldId).toBe('Diagnosis.DiagnosisCode');
+    expect(store.activeQueryId()).toBe(copiedSubquery?.id);
+  });
+
+  it('uses subqueries from Main and protects used subqueries from deletion', () => {
+    store.addSubquery();
+    const subquery = store.report().subqueries[0];
+
+    store.selectTable('Diagnosis');
+    store.addColumn('Diagnosis.DiagnosisCode');
+
+    store.useSubqueryInMain(subquery?.id ?? '');
+    const subqueryTableId = store.subqueryTableId(subquery?.id ?? '');
+
+    expect(store.activeQueryId()).toBe('main');
+    expect(store.report().query.sourceTableIds).toContain(subqueryTableId);
+    expect(store.subqueryUsedBy(subquery?.id ?? '')).toEqual(['Main Query']);
+    expect(store.canRemoveSubquery(subquery?.id ?? '')).toBe(false);
+
+    store.removeSubquery(subquery?.id ?? '');
+
+    expect(store.report().subqueries.map((currentSubquery) => currentSubquery.id)).toContain(
+      subquery?.id,
+    );
+
+    store.removeSourceTable(subqueryTableId);
+
+    expect(store.canRemoveSubquery(subquery?.id ?? '')).toBe(true);
+
+    store.removeSubquery(subquery?.id ?? '');
+
+    expect(store.report().subqueries.map((currentSubquery) => currentSubquery.id)).not.toContain(
+      subquery?.id,
+    );
+  });
+
+  it('wraps a source table into a derived subquery and preserves query references', () => {
+    store.wrapSourceTableIntoDerivedTable('Encounter');
+
+    const derivedSubquery = store.report().subqueries[0];
+    const derivedTableId = store.subqueryTableId(derivedSubquery?.id ?? '');
+    const providerColumn = store
+      .report()
+      .query.columns.find((column) => column.alias === 'Provider');
+    const encounterPatientJoin = store
+      .report()
+      .query.joins.find((join) =>
+        join.conditions.some((condition) => condition.toFieldId === 'Patient.PatientId'),
+      );
+
+    expect(derivedSubquery?.name).toBe('Encounters Derived');
+    expect(derivedSubquery?.query.sourceTableIds).toEqual(['Encounter']);
+    expect(derivedSubquery?.query.columns.map((column) => column.fieldId)).toEqual(
+      store
+        .tableLookup()
+        .get('Encounter')
+        ?.fields.map((field) => field.id),
+    );
+    expect(store.report().query.sourceTableIds).toContain(derivedTableId);
+    expect(store.report().query.sourceTableIds).not.toContain('Encounter');
+    expect(providerColumn?.fieldId).toBe(`${derivedTableId}.Provider`);
+    expect(encounterPatientJoin?.conditions[0]?.fromFieldId).toBe(`${derivedTableId}.PatientId`);
+    expect(store.activeSql()).toContain('FROM (');
+    expect(store.activeSql()).toContain('FROM [dbo].[Encounter] AS [encounter]');
   });
 
   it('exposes only visible subquery columns as datasource fields', () => {
@@ -470,6 +663,67 @@ describe('QueryEditorStore join graph behavior', () => {
       'value-balance',
     ]);
     expect(invalidStore.crosstabMatrix().rows.length).toBeGreaterThan(0);
+  });
+
+  it('flags duplicate table-pair joins and conflicting join types', () => {
+    TestBed.resetTestingModule();
+    const invalidReport: ReportDefinition = {
+      ...cloneValue(MOCK_REPORT),
+      query: {
+        ...MOCK_REPORT.query,
+        sourceTableIds: ['Encounter', 'Patient'],
+        joins: [
+          {
+            id: 'join-encounter-patient-left',
+            type: 'left',
+            conditions: [
+              {
+                id: 'join-encounter-patient-left-condition',
+                fromFieldId: 'Encounter.PatientId',
+                operator: 'equals',
+                toFieldId: 'Patient.PatientId',
+              },
+            ],
+          },
+          {
+            id: 'join-encounter-patient-inner',
+            type: 'inner',
+            conditions: [
+              {
+                id: 'join-encounter-patient-inner-condition',
+                fromFieldId: 'Encounter.Minutes',
+                operator: 'equals',
+                toFieldId: 'Patient.Gender',
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const api: QueryEditorApi = {
+      loadReport: () =>
+        of({
+          metadata: cloneValue(DATA_SOURCE_GROUPS),
+          report: invalidReport,
+          rows: cloneValue(MOCK_ROWS),
+        }),
+      saveReport: (report: ReportDefinition) =>
+        of({
+          report: cloneValue(report),
+          savedAt: '2026-07-01T00:00:00.000Z',
+          message: 'Saved',
+        }),
+    };
+
+    TestBed.configureTestingModule({
+      providers: [{ provide: QUERY_EDITOR_API, useValue: api }],
+    });
+    const invalidStore = TestBed.inject(QueryEditorStore);
+
+    expect(invalidStore.validationIssues()).toContain(
+      'Main query: joins join-encounter-patient-left, join-encounter-patient-inner connect the same datasource pair with conflicting join types (left, inner).',
+    );
+    expect(invalidStore.canvasJoins().map((join) => join.status)).toEqual(['error', 'error']);
   });
 
   it('sorts preview rows by query column sorting', () => {

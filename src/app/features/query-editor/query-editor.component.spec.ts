@@ -91,4 +91,32 @@ describe('QueryEditorComponent layout preferences', () => {
     expect(storedLayout.datasourcePanelWidth).toBe(326);
     expect(storedLayout.columnGridHeight).toBe(240);
   });
+
+  it('collapses and expands properties and SQL side panels', async () => {
+    fixture = TestBed.createComponent(QueryEditorComponent);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const element = fixture.nativeElement as HTMLElement;
+    const propertiesPanel = element.querySelector('app-query-properties-panel');
+    const sqlPanel = element.querySelector('app-query-sql-panel');
+    const collapseProperties = element.querySelector<HTMLButtonElement>(
+      '[aria-label="Collapse properties"]',
+    );
+    const collapseSql = element.querySelector<HTMLButtonElement>('[aria-label="Collapse SQL"]');
+
+    collapseProperties?.click();
+    collapseSql?.click();
+    fixture.detectChanges();
+
+    expect(propertiesPanel?.classList).toContain('query-side-card--collapsed');
+    expect(sqlPanel?.classList).toContain('query-side-card--collapsed');
+
+    element.querySelector<HTMLButtonElement>('[aria-label="Expand properties"]')?.click();
+    element.querySelector<HTMLButtonElement>('[aria-label="Expand SQL"]')?.click();
+    fixture.detectChanges();
+
+    expect(propertiesPanel?.classList).not.toContain('query-side-card--collapsed');
+    expect(sqlPanel?.classList).not.toContain('query-side-card--collapsed');
+  });
 });

@@ -136,6 +136,11 @@
             </label>
             <button type="button" (click)="checkAllFields(table.id)">Check All</button>
             <button type="button" (click)="uncheckAllFields(table.id)">Uncheck All</button>
+            @if (table.sourceType !== 'subquery') {
+              <button type="button" (click)="wrapIntoDerivedTable(table.id)">
+                Wrap into derived table
+              </button>
+            }
             <button type="button" (click)="openTableProperties(table.id)">Properties</button>
           </div>
         }

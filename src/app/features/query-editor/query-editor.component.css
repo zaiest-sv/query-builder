@@ -457,6 +457,8 @@ textarea {
 .preview-panel,
 .crosstab-config,
 .validation-panel,
+.sql-download-panel,
+.execution-plan-panel,
 .definition-panel {
   min-width: 0;
   min-height: 0;
@@ -468,7 +470,6 @@ textarea {
 
 .canvas-panel,
 .criteria-builder,
-.preview-panel,
 .definition-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -478,13 +479,14 @@ textarea {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 
-.preview-panel {
-  grid-template-rows: auto auto auto minmax(0, 1fr);
-}
-
 .preview-panel > .data-table-wrap,
 .preview-panel > .preview-empty {
-  grid-row: 4;
+  flex: 1;
+}
+
+.preview-panel {
+  display: flex;
+  flex-direction: column;
 }
 
 .canvas-panel {
@@ -512,13 +514,94 @@ app-query-column-grid {
   font-weight: 700;
 }
 
+.preview-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--app-border);
+  background: #fff;
+}
+
+.preview-parameters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.preview-parameters label {
+  display: grid;
+  gap: 5px;
+  color: var(--app-muted);
+  font-size: 11px;
+  font-weight: 820;
+  text-transform: uppercase;
+}
+
+.preview-parameters input,
+.preview-parameters select {
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid var(--app-border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--app-text);
+  padding: 6px 8px;
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.preview-parameter-empty {
+  align-self: center;
+  color: var(--app-muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.preview-actions,
+.advanced-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.server-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--app-border);
+  border-radius: 7px;
+  background: var(--app-surface-muted);
+  color: var(--app-muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.server-state--ready {
+  border-color: #b9d7c6;
+  background: #eef8f2;
+  color: var(--app-success);
+}
+
+.server-state--invalid {
+  border-color: #e8d19a;
+  background: #fff8e5;
+  color: var(--app-warning);
+}
+
 .parameter-row small {
   color: var(--app-muted);
 }
 
 .parameters-panel,
 .crosstab-config,
-.validation-panel {
+.validation-panel,
+.sql-download-panel,
+.execution-plan-panel {
   padding: 0;
   overflow: auto;
 }
@@ -556,7 +639,7 @@ textarea {
 }
 
 .criteria-toolbar {
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
   align-items: end;
   padding: 14px;
 }
@@ -670,6 +753,27 @@ textarea {
   padding: 12px;
 }
 
+.parameter-group {
+  display: grid;
+  gap: 8px;
+}
+
+.parameter-group h3 {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 11px;
+  font-weight: 840;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.parameter-empty {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 12px;
+  font-weight: 680;
+}
+
 .parameter-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 34px;
@@ -705,6 +809,22 @@ textarea {
 .toggle-inline input {
   width: 16px;
   min-height: 16px;
+}
+
+.lookup-options-row {
+  grid-column: 1 / -1;
+}
+
+.lookup-options {
+  height: auto;
+  min-height: 88px;
+  margin: 0;
+  border: 1px solid var(--app-border);
+  background: #fff;
+  color: var(--app-text);
+  padding: 8px 9px;
+  resize: vertical;
+  white-space: pre-wrap;
 }
 
 .parameters-footer {
@@ -799,6 +919,26 @@ textarea {
 .preview-validation ul {
   margin: 0;
   padding-left: 18px;
+}
+
+.sql-download-panel,
+.execution-plan-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.sql-preview,
+.execution-plan {
+  min-height: 180px;
+  margin: 0;
+  overflow: auto;
+  padding: 14px;
+  background: #16212f;
+  color: #d8e8f7;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-size: 12px;
+  line-height: 1.48;
+  white-space: pre-wrap;
 }
 
 .preview-empty {

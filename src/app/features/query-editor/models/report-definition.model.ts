@@ -90,6 +90,15 @@ export interface QueryParameter {
   readonly type: FieldType;
   readonly required: boolean;
   readonly defaultValue: string;
+  readonly kind?: 'static' | 'dynamic';
+  readonly sourceFieldId?: string;
+  readonly lookup?: QueryParameterLookup;
+}
+
+export interface QueryParameterLookup {
+  readonly enabled: boolean;
+  readonly multiple: boolean;
+  readonly options: readonly string[];
 }
 
 export interface QueryCanvasTablePosition {
@@ -115,7 +124,13 @@ export interface QuerySubquery {
   readonly id: string;
   readonly name: string;
   readonly alias: string;
+  readonly description?: string;
+  readonly settings?: QuerySubquerySettings;
   readonly query: QueryDocument;
+}
+
+export interface QuerySubquerySettings {
+  readonly previewLimit: number;
 }
 
 export interface CrosstabValueDefinition {

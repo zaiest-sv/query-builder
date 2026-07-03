@@ -4,6 +4,36 @@
       <h2>Validation · {{ store.activeQueryLabel() }}</h2>
       <span>{{ store.activeValidationIssues().length }}</span>
     </div>
+    <div class="advanced-actions">
+      <button
+        class="button button--secondary"
+        type="button"
+        [disabled]="store.serverValidation().status === 'checking'"
+        (click)="runServerValidation()"
+      >
+        Validate Server
+      </button>
+      <button
+        class="button button--secondary"
+        type="button"
+        [disabled]="store.serverPreview().status === 'loading'"
+        (click)="runServerPreview()"
+      >
+        Preview Server
+      </button>
+    </div>
+    <div
+      class="server-state"
+      [class.server-state--ready]="store.serverValidation().status === 'valid'"
+      [class.server-state--invalid]="
+        store.serverValidation().status === 'invalid' || store.serverValidation().status === 'error'
+      "
+    >
+      {{ store.serverValidation().message }}
+      @if (store.serverValidation().checkedAt) {
+        <span>{{ store.serverValidation().checkedAt }}</span>
+      }
+    </div>
     @if (store.activeValidationIssues().length === 0) {
       <p class="empty-state">Active query is valid.</p>
     } @else {
@@ -16,6 +46,26 @@
     <div class="global-validation-summary">
       Full report validation: {{ store.validationIssues().length }} issues
     </div>
+  </div>
+  <div class="sql-download-panel">
+    <div class="panel-heading">
+      <h2>SQL · {{ store.activeQueryLabel() }}</h2>
+      <button class="button button--secondary" type="button" (click)="downloadSql()">
+        Download SQL
+      </button>
+    </div>
+    <pre class="sql-preview">{{ store.serverPreview().generatedSql || store.activeSql() }}</pre>
+  </div>
+  <div class="execution-plan-panel">
+    <div class="panel-heading">
+      <h2>Execution Plan</h2>
+      @if (store.serverPreview().executedAt) {
+        <span>{{ store.serverPreview().executedAt }}</span>
+      }
+    </div>
+    <pre class="execution-plan">{{
+      store.serverPreview().executionPlan || 'Execution plan will appear after server preview.'
+    }}</pre>
   </div>
   <div class="definition-panel">
     <h2>Report Definition</h2>

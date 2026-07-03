@@ -107,6 +107,34 @@
   white-space: nowrap;
 }
 
+.text-editor-cell {
+  display: block;
+  width: calc(100% - 20px);
+  min-width: 0;
+  min-height: 34px;
+  margin: 0 10px;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--app-text);
+  padding: 6px 9px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-editor-cell:hover {
+  border-color: var(--app-accent);
+  background: var(--app-accent-soft);
+}
+
+.text-editor-cell.expression-cell {
+  color: var(--app-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-size: 12px;
+}
+
 .inline-input,
 .inline-select {
   box-sizing: border-box;
@@ -214,6 +242,7 @@
 .column-grid-resizer:focus-visible,
 .grid-row:focus-visible,
 .icon-button:focus-visible,
+.text-editor-cell:focus-visible,
 input:focus-visible,
 select:focus-visible {
   outline: 2px solid var(--app-accent);

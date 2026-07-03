@@ -118,6 +118,10 @@ summary:focus-visible {
   gap: 8px;
 }
 
+.subquery-editor__wide {
+  grid-column: 1 / -1;
+}
+
 .subquery-editor label {
   display: grid;
   gap: 5px;
@@ -169,6 +173,13 @@ summary:focus-visible {
   border-color: #e8d19a;
   background: #fff8e5;
   color: var(--app-warning);
+}
+
+.subquery-state .subquery-state__pill--locked {
+  max-width: 100%;
+  border-color: #d4dde9;
+  background: #f2f6fb;
+  color: var(--app-muted);
 }
 
 .subquery-output {
@@ -242,7 +253,7 @@ summary:focus-visible {
 
 .subquery-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr 34px;
+  grid-template-columns: 1fr 1fr 1fr 34px;
   gap: 7px;
 }
 

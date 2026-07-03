@@ -22,6 +22,12 @@ export interface JoinConditionCandidate {
   readonly toFieldId: string;
 }
 
+export interface JoinTablePair {
+  readonly key: string;
+  readonly firstTableId: string;
+  readonly secondTableId: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class QueryJoinGraphService {
   assessJoinDrop(
@@ -204,6 +210,79 @@ export function findDuplicateJoinConditionIds(
   );
 }
 
+export function getJoinTablePair(
+  join: QueryJoin,
+  fieldLookup: ReadonlyMap<string, DataSourceField>,
+): JoinTablePair | null {
+  for (const condition of join.conditions) {
+    const fromField = fieldLookup.get(condition.fromFieldId);
+    const toField = fieldLookup.get(condition.toFieldId);
+
+    if (!fromField || !toField || fromField.tableId === toField.tableId) {
+      continue;
+    }
+
+    const [firstTableId, secondTableId] = [fromField.tableId, toField.tableId].sort();
+
+    return {
+      key: createJoinTablePairKey(firstTableId, secondTableId),
+      firstTableId,
+      secondTableId,
+    };
+  }
+
+  return null;
+}
+
+export function findDuplicateJoinPairIds(
+  joins: readonly QueryJoin[],
+  fieldLookup: ReadonlyMap<string, DataSourceField>,
+): ReadonlySet<string> {
+  const joinIdsByPairKey = new Map<string, string[]>();
+
+  for (const join of joins) {
+    const pair = getJoinTablePair(join, fieldLookup);
+
+    if (!pair) {
+      continue;
+    }
+
+    const joinIds = joinIdsByPairKey.get(pair.key) ?? [];
+    joinIds.push(join.id);
+    joinIdsByPairKey.set(pair.key, joinIds);
+  }
+
+  return new Set(
+    Array.from(joinIdsByPairKey.values())
+      .filter((joinIds) => joinIds.length > 1)
+      .flat(),
+  );
+}
+
+export function findConflictingJoinPairIds(
+  joins: readonly QueryJoin[],
+  fieldLookup: ReadonlyMap<string, DataSourceField>,
+): ReadonlySet<string> {
+  const groups = new Map<string, { readonly type: string; readonly id: string }[]>();
+
+  for (const join of joins) {
+    const pair = getJoinTablePair(join, fieldLookup);
+
+    if (!pair) {
+      continue;
+    }
+
+    const joinsForPair = groups.get(pair.key) ?? [];
+    groups.set(pair.key, [...joinsForPair, { id: join.id, type: join.type }]);
+  }
+
+  return new Set(
+    Array.from(groups.values())
+      .filter((joinsForPair) => new Set(joinsForPair.map((join) => join.type)).size > 1)
+      .flatMap((joinsForPair) => joinsForPair.map((join) => join.id)),
+  );
+}
+
 export function areJoinConditionsEqual(
   left: QueryJoinCondition,
   right: QueryJoinCondition,
@@ -252,6 +331,10 @@ function joinConnectsTables(
 
 function joinConditionKey(condition: JoinConditionCandidate | QueryJoinCondition): string {
   return `${condition.fromFieldId}|${condition.operator}|${condition.toFieldId}`;
+}
+
+function createJoinTablePairKey(firstTableId: string, secondTableId: string): string {
+  return `${firstTableId}::${secondTableId}`;
 }
 
 function scoreFieldMatch(fromField: DataSourceField, toField: DataSourceField): number {

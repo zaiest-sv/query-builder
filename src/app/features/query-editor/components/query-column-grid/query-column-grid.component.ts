@@ -9,8 +9,9 @@ import {
   inject,
   signal,
 } from '@angular/core';
-import { SortDirection } from '../../models/report-definition.model';
+import { QueryColumn, SortDirection } from '../../models/report-definition.model';
 import { QueryEditorStore } from '../../services/query-editor-store.service';
+import { QueryExpressionEditorModalComponent } from '../query-expression-editor-modal/query-expression-editor-modal.component';
 
 const sortDirections: readonly SortDirection[] = ['none', 'asc', 'desc'];
 const minQueryGridHeight = 96;
@@ -18,8 +19,22 @@ const maxQueryGridHeight = 420;
 const defaultQueryGridHeight = 132;
 const resizeKeyboardStep = 24;
 
+type ColumnTextEditorKind = 'expression' | 'criteria' | 'orCriteria';
+
+interface ColumnTextEditorState {
+  readonly columnId: string;
+  readonly kind: ColumnTextEditorKind;
+  readonly orIndex?: number;
+  readonly title: string;
+  readonly label: string;
+  readonly value: string;
+  readonly helperText: string;
+  readonly placeholder: string;
+}
+
 @Component({
   selector: 'app-query-column-grid',
+  imports: [QueryExpressionEditorModalComponent],
   templateUrl: './query-column-grid.component.html',
   styleUrl: './query-column-grid.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -40,6 +55,7 @@ export class QueryColumnGridComponent {
   protected readonly maxQueryGridHeight = maxQueryGridHeight;
   protected readonly queryGridHeight = signal(defaultQueryGridHeight);
   protected readonly isColumnGridResizing = signal(false);
+  protected readonly activeTextEditor = signal<ColumnTextEditorState | null>(null);
 
   private resizeStartY = 0;
   private resizeStartHeight = this.queryGridHeight();
@@ -99,6 +115,68 @@ export class QueryColumnGridComponent {
 
   protected updateColumnOrCriteria(columnId: string, index: number, event: Event): void {
     this.store.updateColumnOrCriteria(columnId, index, readControlValue(event));
+  }
+
+  protected openExpressionEditor(column: QueryColumn, event: Event): void {
+    event.stopPropagation();
+    this.activeTextEditor.set({
+      columnId: column.id,
+      kind: 'expression',
+      title: `Edit expression · ${column.alias}`,
+      label: 'SQL expression',
+      value: column.expression,
+      helperText: 'Use a field, function, CASE expression, or aggregate expression.',
+      placeholder: '[encounter].[CheckDate]',
+    });
+  }
+
+  protected openCriteriaEditor(column: QueryColumn, event: Event): void {
+    event.stopPropagation();
+    this.activeTextEditor.set({
+      columnId: column.id,
+      kind: 'criteria',
+      title: `Edit criteria · ${column.alias}`,
+      label: 'Criteria',
+      value: column.criteria || '',
+      helperText: 'Examples: = Active, <> Cancelled, > 100, %urgent%.',
+      placeholder: '= Active',
+    });
+  }
+
+  protected openOrCriteriaEditor(column: QueryColumn, index: number, event: Event): void {
+    event.stopPropagation();
+    this.activeTextEditor.set({
+      columnId: column.id,
+      kind: 'orCriteria',
+      orIndex: index,
+      title: `Edit OR criteria ${index + 1} · ${column.alias}`,
+      label: 'OR criteria',
+      value: column.orCriteria?.[index] || '',
+      helperText: 'This value is joined with the column Criteria by OR.',
+      placeholder: '= Pending',
+    });
+  }
+
+  protected saveTextEditor(value: string): void {
+    const editor = this.activeTextEditor();
+
+    if (!editor) {
+      return;
+    }
+
+    if (editor.kind === 'expression') {
+      this.store.updateColumnExpression(editor.columnId, value);
+    } else if (editor.kind === 'criteria') {
+      this.store.updateColumnCriteria(editor.columnId, value);
+    } else {
+      this.store.updateColumnOrCriteria(editor.columnId, editor.orIndex ?? 0, value);
+    }
+
+    this.activeTextEditor.set(null);
+  }
+
+  protected closeTextEditor(): void {
+    this.activeTextEditor.set(null);
   }
 
   protected isColumnActive(fieldId: string): boolean {

@@ -133,7 +133,7 @@ export class DatasourcePanelComponent {
       return;
     }
 
-    this.store.selectTable(this.store.subqueryTableId(subqueryId));
+    this.store.useSubqueryInMain(subqueryId);
   }
 
   protected updateSubqueryName(subqueryId: string, event: Event): void {
@@ -144,6 +144,24 @@ export class DatasourcePanelComponent {
     this.store.updateSubqueryAlias(subqueryId, readControlValue(event));
   }
 
+  protected updateSubqueryDescription(subqueryId: string, event: Event): void {
+    this.store.updateSubqueryDescription(subqueryId, readControlValue(event));
+  }
+
+  protected updateSubqueryPreviewLimit(subqueryId: string, event: Event): void {
+    this.store.updateSubqueryPreviewLimit(subqueryId, Number(readControlValue(event)));
+  }
+
+  protected copySubquery(subqueryId: string): void {
+    this.store.copySubquery(subqueryId);
+  }
+
+  protected removeSubquery(subqueryId: string): void {
+    if (this.store.canRemoveSubquery(subqueryId)) {
+      this.store.removeSubquery(subqueryId);
+    }
+  }
+
   protected canUseSubqueryAsSource(subqueryId: string): boolean {
     const subquery = this.store
       .report()
@@ -152,8 +170,16 @@ export class DatasourcePanelComponent {
     return Boolean(
       subquery &&
       this.subqueryIssues(subquery).length === 0 &&
-      this.store.canUseTableAsSource(this.store.subqueryTableId(subqueryId)),
+      this.store.canUseTableAsSourceInQuery(this.store.subqueryTableId(subqueryId), 'main'),
     );
+  }
+
+  protected subqueryPreviewLimit(subquery: QuerySubquery): number {
+    return subquery.settings?.previewLimit ?? 100;
+  }
+
+  protected subqueryUsedBy(subquery: QuerySubquery): readonly string[] {
+    return this.store.subqueryUsedBy(subquery.id);
   }
 
   protected subquerySourceCount(subquery: QuerySubquery): number {
@@ -178,6 +204,14 @@ export class DatasourcePanelComponent {
 
     if (outputColumns.length === 0) {
       issues.push('Select at least one visible output column.');
+    }
+
+    if (!this.store.isSubqueryNameAvailable(subquery.id, subquery.name)) {
+      issues.push('Subquery name must be unique.');
+    }
+
+    if (!this.store.isSubqueryAliasAvailable(subquery.id, subquery.alias)) {
+      issues.push('Subquery alias must be unique.');
     }
 
     if (this.store.hasSubqueryDependencyCycle(subquery.id)) {

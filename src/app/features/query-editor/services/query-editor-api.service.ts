@@ -1,5 +1,6 @@
+import { HttpClient } from '@angular/common/http';
 import { inject, Injectable, InjectionToken } from '@angular/core';
-import { Observable, of } from 'rxjs';
+import { map, Observable, of } from 'rxjs';
 import { DATA_SOURCE_GROUPS, MOCK_REPORT, MOCK_ROWS } from '../data/mock-report-data';
 import {
   CrosstabAggregation,
@@ -21,10 +22,15 @@ import {
   QueryJoinType,
   QueryParameter,
   QuerySubquery,
+  PreviewRow,
   ReportDefinition,
   SortDirection,
 } from '../models/report-definition.model';
+import { getJoinTablePair } from './query-join-graph.service';
+import { QueryPreviewService } from './query-preview.service';
+import { QuerySqlBuilderService } from './query-sql-builder.service';
 import { createSubqueryTableId } from './query-subquery-datasource.service';
+import { QueryValidationService } from './query-validation.service';
 
 const mockReportStorageKey = 'query-builder.mock-report';
 const mockReportStorageSchemaVersion = 2;
@@ -48,27 +54,58 @@ export interface SaveReportResponse {
   readonly message: string;
 }
 
+export interface QueryValidationResponse {
+  readonly status: 'valid' | 'invalid' | 'error';
+  readonly issues: readonly string[];
+  readonly checkedAt: string;
+  readonly message: string;
+}
+
+export interface QueryPreviewRequest {
+  readonly report: ReportDefinition;
+  readonly queryId: 'main' | string;
+  readonly limit: number;
+  readonly parameterValues: Readonly<Record<string, string>>;
+}
+
+export interface QueryPreviewResponse {
+  readonly status: 'ready' | 'invalid' | 'error';
+  readonly columns: readonly QueryColumn[];
+  readonly rows: readonly PreviewRow[];
+  readonly issues: readonly string[];
+  readonly generatedSql: string;
+  readonly executionPlan?: string;
+  readonly executedAt: string;
+  readonly message: string;
+}
+
 export interface QueryEditorApi {
   loadReport(reportId: string): Observable<QueryEditorData>;
   saveReport(report: ReportDefinition): Observable<SaveReportResponse>;
+  validateReport?(report: ReportDefinition): Observable<QueryValidationResponse>;
+  previewReport?(request: QueryPreviewRequest): Observable<QueryPreviewResponse>;
 }
 
 @Injectable({ providedIn: 'root' })
 export class MockQueryEditorApiService implements QueryEditorApi {
+  private readonly previewService = inject(QueryPreviewService);
+  private readonly sqlBuilder = inject(QuerySqlBuilderService);
+  private readonly validationService = inject(QueryValidationService);
   private report = readStoredReport() ?? cloneReport(MOCK_REPORT);
 
   loadReport(reportId: string): Observable<QueryEditorData> {
     const report = reportId === this.report.id ? this.report : MOCK_REPORT;
+    const metadata = cloneValue(DATA_SOURCE_GROUPS);
 
     return of({
-      metadata: cloneValue(DATA_SOURCE_GROUPS),
-      report: cloneReport(report),
+      metadata,
+      report: cloneReport(report, metadata),
       rows: cloneValue(MOCK_ROWS),
     });
   }
 
   saveReport(report: ReportDefinition): Observable<SaveReportResponse> {
-    this.report = cloneReport(report);
+    this.report = cloneReport(report, DATA_SOURCE_GROUPS);
     writeStoredReport(this.report);
 
     return of({
@@ -77,6 +114,122 @@ export class MockQueryEditorApiService implements QueryEditorApi {
       message: 'Mock report definition saved',
     });
   }
+
+  validateReport(report: ReportDefinition): Observable<QueryValidationResponse> {
+    const normalizedReport = cloneReport(report, DATA_SOURCE_GROUPS);
+    const context = createDataContext(createSubqueryTables(normalizedReport.subqueries));
+    const issues = this.validationService.validateReport(
+      normalizedReport,
+      context.tableLookup,
+      context.fieldLookup,
+    );
+
+    return of({
+      status: issues.length > 0 ? 'invalid' : 'valid',
+      issues,
+      checkedAt: new Date().toISOString(),
+      message:
+        issues.length > 0
+          ? `${issues.length} validation issue${issues.length === 1 ? '' : 's'}`
+          : 'Mock server validation passed',
+    });
+  }
+
+  previewReport(request: QueryPreviewRequest): Observable<QueryPreviewResponse> {
+    const report = cloneReport(request.report, DATA_SOURCE_GROUPS);
+    const context = createDataContext(createSubqueryTables(report.subqueries));
+    const query = findQueryDocument(report, request.queryId);
+    const activeSubquery =
+      request.queryId === 'main'
+        ? null
+        : (report.subqueries.find((subquery) => subquery.id === request.queryId) ?? null);
+    const issues = this.validationService.validateActiveQuery(
+      query,
+      activeSubquery,
+      report,
+      context.tableLookup,
+      context.fieldLookup,
+    );
+    const sourceRows = this.previewService.createDataRows(
+      MOCK_ROWS,
+      report,
+      createDataContext().fieldLookup,
+    );
+    const parameterizedQuery = applyPreviewParameterValues(query, request.parameterValues);
+    const filteredRows = this.previewService.applyPromptFilters(
+      sourceRows,
+      parameterizedQuery.filters,
+      parameterizedQuery.parameters,
+    );
+    const rows = this.previewService
+      .projectRows(
+        this.previewService.sortRows(
+          this.previewService.applyColumnCriteria(filteredRows, parameterizedQuery.columns),
+          parameterizedQuery.columns,
+        ),
+        parameterizedQuery.columns.filter((column) => column.visible),
+      )
+      .slice(0, Math.max(1, request.limit));
+
+    return of({
+      status: issues.length > 0 ? 'invalid' : 'ready',
+      columns: parameterizedQuery.columns.filter((column) => column.visible),
+      rows,
+      issues,
+      generatedSql: this.sqlBuilder.buildQuery(
+        parameterizedQuery,
+        report,
+        context.tableLookup,
+        context.fieldLookup,
+      ),
+      executionPlan: `Mock execution plan: scan ${query.sourceTableIds.length} source${query.sourceTableIds.length === 1 ? '' : 's'}, project ${rows.length} row${rows.length === 1 ? '' : 's'}.`,
+      executedAt: new Date().toISOString(),
+      message:
+        issues.length > 0
+          ? 'Preview validation failed'
+          : `Mock preview returned ${rows.length} row${rows.length === 1 ? '' : 's'}`,
+    });
+  }
+}
+
+export const QUERY_EDITOR_API_BASE_URL = new InjectionToken<string>('QueryEditorApiBaseUrl', {
+  providedIn: 'root',
+  factory: () => '/api/query-editor',
+});
+
+@Injectable({ providedIn: 'root' })
+export class RealQueryEditorApiService implements QueryEditorApi {
+  private readonly baseUrl = inject(QUERY_EDITOR_API_BASE_URL);
+  private readonly http = inject(HttpClient);
+
+  loadReport(reportId: string): Observable<QueryEditorData> {
+    return this.http
+      .get<unknown>(`${this.baseUrl}/reports/${encodeURIComponent(reportId)}`)
+      .pipe(map((response) => normalizeQueryEditorData(response)));
+  }
+
+  saveReport(report: ReportDefinition): Observable<SaveReportResponse> {
+    return this.http
+      .put<unknown>(`${this.baseUrl}/reports/${encodeURIComponent(report.id)}`, report)
+      .pipe(map((response) => normalizeSaveReportResponse(response, report)));
+  }
+
+  validateReport(report: ReportDefinition): Observable<QueryValidationResponse> {
+    return this.http
+      .post<unknown>(`${this.baseUrl}/reports/${encodeURIComponent(report.id)}/validate`, {
+        report,
+      })
+      .pipe(map((response) => normalizeValidationResponse(response)));
+  }
+
+  previewReport(request: QueryPreviewRequest): Observable<QueryPreviewResponse> {
+    return this.http
+      .post<unknown>(
+        `${this.baseUrl}/reports/${encodeURIComponent(request.report.id)}/preview`,
+        request,
+      )
+      .pipe(map((response) => normalizePreviewResponse(response, request)));
+  }
 }
 
 export const QUERY_EDITOR_API = new InjectionToken<QueryEditorApi>('QueryEditorApi', {
@@ -84,23 +237,234 @@ export const QUERY_EDITOR_API = new InjectionToken<QueryEditorApi>('QueryEditorA
   factory: () => inject(MockQueryEditorApiService),
 });
 
-function cloneReport(report: ReportDefinition): ReportDefinition {
-  return normalizeReport(cloneValue(report));
+function cloneReport(
+  report: ReportDefinition,
+  metadata: readonly DataSourceGroup[] = DATA_SOURCE_GROUPS,
+): ReportDefinition {
+  return normalizeReport(cloneValue(report), metadata);
 }
 
 function cloneValue<T>(value: T): T {
   return structuredClone(value);
 }
 
-function normalizeReport(value: unknown): ReportDefinition {
+function normalizeQueryEditorData(value: unknown): QueryEditorData {
+  const rawData = isRecord(value) ? value : {};
+  const metadata = normalizeMetadata(rawData['metadata'] ?? rawData['schema']);
+
+  return {
+    metadata,
+    report: normalizeReport(rawData['report'], metadata),
+    rows: normalizeRows(rawData['rows']),
+  };
+}
+
+function normalizeSaveReportResponse(
+  value: unknown,
+  fallbackReport: ReportDefinition,
+): SaveReportResponse {
+  const rawResponse = isRecord(value) ? value : {};
+  const metadata = normalizeMetadata(rawResponse['metadata'] ?? rawResponse['schema']);
+
+  return {
+    report: normalizeReport(rawResponse['report'] ?? fallbackReport, metadata),
+    savedAt: readString(rawResponse['savedAt']) || new Date().toISOString(),
+    message: readString(rawResponse['message']) || 'Report definition saved',
+  };
+}
+
+function normalizeValidationResponse(value: unknown): QueryValidationResponse {
+  const rawResponse = isRecord(value) ? value : {};
+  const issues = readStringArray(rawResponse['issues']);
+  const status = readValidationStatus(rawResponse['status'], issues);
+
+  return {
+    status,
+    issues,
+    checkedAt: readString(rawResponse['checkedAt']) || new Date().toISOString(),
+    message:
+      readString(rawResponse['message']) ||
+      (status === 'valid'
+        ? 'Server validation passed'
+        : `${issues.length} validation issue${issues.length === 1 ? '' : 's'}`),
+  };
+}
+
+function normalizePreviewResponse(
+  value: unknown,
+  request: QueryPreviewRequest,
+): QueryPreviewResponse {
+  const rawResponse = isRecord(value) ? value : {};
+  const issues = readStringArray(rawResponse['issues']);
+  const columns = normalizePreviewColumns(
+    rawResponse['columns'],
+    findQueryDocument(request.report, request.queryId).columns,
+  );
+  const rows = normalizePreviewRows(rawResponse['rows']);
+  const status = readPreviewStatus(rawResponse['status'], issues);
+
+  return {
+    status,
+    columns,
+    rows,
+    issues,
+    generatedSql: readString(rawResponse['generatedSql']),
+    ...(readString(rawResponse['executionPlan'])
+      ? { executionPlan: readString(rawResponse['executionPlan']) }
+      : {}),
+    executedAt: readString(rawResponse['executedAt']) || new Date().toISOString(),
+    message:
+      readString(rawResponse['message']) ||
+      (status === 'ready'
+        ? `Preview returned ${rows.length} row${rows.length === 1 ? '' : 's'}`
+        : 'Preview did not complete'),
+  };
+}
+
+function normalizeMetadata(value: unknown): readonly DataSourceGroup[] {
+  const groups = readArray(value)
+    .map(normalizeDataSourceGroup)
+    .filter((group): group is DataSourceGroup => group !== null);
+
+  return groups.length > 0 ? groups : cloneValue(DATA_SOURCE_GROUPS);
+}
+
+function normalizeDataSourceGroup(value: unknown, index: number): DataSourceGroup | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const tables = readArray(value['tables'])
+    .map(normalizeDataSourceTable)
+    .filter((table): table is DataSourceTable => table !== null);
+
+  if (tables.length === 0) {
+    return null;
+  }
+
+  const label = readString(value['label']) || `Group ${index + 1}`;
+
+  return {
+    id: readString(value['id']) || createSafeSqlAlias(label) || `group-${index + 1}`,
+    label,
+    tables,
+  };
+}
+
+function normalizeDataSourceTable(value: unknown, index: number): DataSourceTable | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const name = readString(value['name']);
+  const label = readString(value['label']) || name || `Table ${index + 1}`;
+  const id = readString(value['id']) || createSafeSqlAlias(name || label);
+
+  if (!id) {
+    return null;
+  }
+
+  const fields = readArray(value['fields'])
+    .map((fieldValue, fieldIndex) => normalizeDataSourceField(fieldValue, fieldIndex, id))
+    .filter((field): field is DataSourceField => field !== null);
+
+  if (fields.length === 0) {
+    return null;
+  }
+
+  const sourceType = value['sourceType'] === 'subquery' ? 'subquery' : undefined;
+  const subqueryId = sourceType === 'subquery' ? readString(value['subqueryId']) : '';
+
+  return {
+    id,
+    schema: readString(value['schema']) || 'dbo',
+    name: name || id,
+    alias: createSafeSqlAlias(readString(value['alias']) || name || label) || id,
+    label,
+    ...(sourceType ? { sourceType } : {}),
+    ...(subqueryId ? { subqueryId } : {}),
+    fields,
+  };
+}
+
+function normalizeDataSourceField(
+  value: unknown,
+  index: number,
+  tableId: string,
+): DataSourceField | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const name = readString(value['name']);
+  const label = readString(value['label']) || name || `Field ${index + 1}`;
+  const id = readString(value['id']) || `${tableId}.${createSafeSqlAlias(name || label)}`;
+
+  if (!id || !name) {
+    return null;
+  }
+
+  return {
+    id,
+    tableId: readString(value['tableId']) || tableId,
+    name,
+    label,
+    expression: readString(value['expression']) || `${tableId}.${name}`,
+    type: readFieldType(value['type']),
+    nullable: readBoolean(value['nullable'], true),
+    aggregations: normalizeAggregations(value['aggregations']),
+  };
+}
+
+function normalizeAggregations(value: unknown): readonly CrosstabAggregation[] {
+  const aggregations = readStringArray(value).filter(
+    (aggregation): aggregation is CrosstabAggregation =>
+      aggregation === 'count' ||
+      aggregation === 'sum' ||
+      aggregation === 'avg' ||
+      aggregation === 'min' ||
+      aggregation === 'max',
+  );
+
+  return aggregations.length > 0 ? aggregations : (['count'] as const);
+}
+
+function normalizeRows(value: unknown): readonly DataRecord[] {
+  return readArray(value)
+    .map((row, index) => normalizeDataRecord(row, index))
+    .filter((row): row is DataRecord => row !== null);
+}
+
+function normalizeDataRecord(value: unknown, index: number): DataRecord | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const record: { id: string } & Record<string, string | number | boolean | null> = {
+    id: readString(value['id']) || `row-${index + 1}`,
+  };
+
+  for (const [key, cellValue] of Object.entries(value)) {
+    if (key !== 'id') {
+      record[key] = normalizeCellValue(cellValue);
+    }
+  }
+
+  return record;
+}
+
+function normalizeReport(
+  value: unknown,
+  metadata: readonly DataSourceGroup[] = DATA_SOURCE_GROUPS,
+): ReportDefinition {
   const rawReport = isRecord(value) ? value : (MOCK_REPORT as unknown as ReadonlyRecord);
   const rawSubqueries = readArray(rawReport['subqueries']);
-  const rawSubqueryTables = createSubqueryTablesFromRaw(rawSubqueries);
-  const rawContext = createDataContext(rawSubqueryTables);
+  const rawSubqueryTables = createSubqueryTablesFromRaw(rawSubqueries, metadata);
+  const rawContext = createDataContext(rawSubqueryTables, metadata);
   const subqueries = rawSubqueries
     .map((subquery, index) => normalizeSubquery(subquery, index, rawContext))
     .filter((subquery): subquery is QuerySubquery => subquery !== null);
-  const context = createDataContext(createSubqueryTables(subqueries));
+  const context = createDataContext(createSubqueryTables(subqueries, metadata), metadata);
   const query = normalizeQuery(rawReport['query'], context);
 
   return {
@@ -114,8 +478,11 @@ function normalizeReport(value: unknown): ReportDefinition {
   };
 }
 
-function createDataContext(extraTables: readonly DataSourceTable[] = []): DataContext {
-  const tables = [...DATA_SOURCE_GROUPS.flatMap((group) => group.tables), ...extraTables];
+function createDataContext(
+  extraTables: readonly DataSourceTable[] = [],
+  metadata: readonly DataSourceGroup[] = DATA_SOURCE_GROUPS,
+): DataContext {
+  const tables = [...metadata.flatMap((group) => group.tables), ...extraTables];
   const tableLookup = new Map(tables.map((table) => [table.id, table] as const));
   const fieldLookup = new Map(
     tables.flatMap((table) => table.fields).map((field) => [field.id, field] as const),
@@ -183,11 +550,24 @@ function normalizeSubquery(
     id,
     name,
     alias,
+    ...(readString(value['description']) ? { description: readString(value['description']) } : {}),
+    settings: normalizeSubquerySettings(value['settings']),
     query: normalizeQuery(value['query'], context, createSubqueryTableId(id)),
   };
 }
 
-function createSubqueryTablesFromRaw(values: readonly unknown[]): readonly DataSourceTable[] {
+function normalizeSubquerySettings(value: unknown): QuerySubquery['settings'] {
+  const rawSettings = isRecord(value) ? value : {};
+
+  return {
+    previewLimit: readBoundedInteger(rawSettings['previewLimit'], 100, 1, 500),
+  };
+}
+
+function createSubqueryTablesFromRaw(
+  values: readonly unknown[],
+  metadata: readonly DataSourceGroup[],
+): readonly DataSourceTable[] {
   return values
     .map((value, index) => {
       if (!isRecord(value) || !isRecord(value['query'])) {
@@ -200,14 +580,23 @@ function createSubqueryTablesFromRaw(values: readonly unknown[]): readonly DataS
         createSafeSqlAlias(readString(value['alias']) || name || id) || `sq${index + 1}`;
       const columns = readArray(value['query']['columns']);
 
-      return createSubqueryTable(id, name, alias, columns);
+      return createSubqueryTable(id, name, alias, columns, metadata);
     })
     .filter((table): table is DataSourceTable => table !== null);
 }
 
-function createSubqueryTables(subqueries: readonly QuerySubquery[]): readonly DataSourceTable[] {
+function createSubqueryTables(
+  subqueries: readonly QuerySubquery[],
+  metadata: readonly DataSourceGroup[] = DATA_SOURCE_GROUPS,
+): readonly DataSourceTable[] {
   return subqueries.map((subquery) =>
-    createSubqueryTable(subquery.id, subquery.name, subquery.alias, subquery.query.columns),
+    createSubqueryTable(
+      subquery.id,
+      subquery.name,
+      subquery.alias,
+      subquery.query.columns,
+      metadata,
+    ),
   );
 }
 
@@ -216,8 +605,9 @@ function createSubqueryTable(
   name: string,
   alias: string,
   rawColumns: readonly unknown[],
+  metadata: readonly DataSourceGroup[],
 ): DataSourceTable {
-  const baseFieldLookup = createDataContext().fieldLookup;
+  const baseFieldLookup = createDataContext([], metadata).fieldLookup;
   const tableId = createSubqueryTableId(id);
   const fields = rawColumns
     .map((column, index) => {
@@ -395,8 +785,29 @@ function normalizeQueryJoins(
       );
     });
 
-    if (conditions.length > 0) {
-      normalizedJoins.push({ ...join, conditions });
+    if (conditions.length === 0) {
+      continue;
+    }
+
+    const normalizedJoin = { ...join, conditions };
+    const pair = getJoinTablePair(normalizedJoin, fieldLookup);
+    const existingJoinIndex = pair
+      ? normalizedJoins.findIndex((currentJoin) => {
+          const currentPair = getJoinTablePair(currentJoin, fieldLookup);
+
+          return currentPair?.key === pair.key && currentJoin.type === normalizedJoin.type;
+        })
+      : -1;
+
+    const existingJoin = normalizedJoins[existingJoinIndex];
+
+    if (existingJoin) {
+      normalizedJoins[existingJoinIndex] = {
+        ...existingJoin,
+        conditions: [...existingJoin.conditions, ...conditions],
+      };
+    } else {
+      normalizedJoins.push(normalizedJoin);
     }
   }
 
@@ -587,6 +998,129 @@ function normalizeCrosstabFieldId(fieldId: string, columns: readonly QueryColumn
   return columns.find((column) => column.fieldId === fieldId)?.id ?? fieldId;
 }
 
+function findQueryDocument(report: ReportDefinition, queryId: string): QueryDocument {
+  if (queryId === 'main') {
+    return report.query;
+  }
+
+  return report.subqueries.find((subquery) => subquery.id === queryId)?.query ?? report.query;
+}
+
+function applyPreviewParameterValues(
+  query: QueryDocument,
+  parameterValues: Readonly<Record<string, string>>,
+): QueryDocument {
+  if (Object.keys(parameterValues).length === 0) {
+    return query;
+  }
+
+  return {
+    ...query,
+    parameters: query.parameters.map((parameter) => ({
+      ...parameter,
+      defaultValue: parameterValues[parameter.name] ?? parameter.defaultValue,
+    })),
+  };
+}
+
+function normalizePreviewColumns(
+  value: unknown,
+  fallbackColumns: readonly QueryColumn[],
+): readonly QueryColumn[] {
+  const columns = readArray(value)
+    .map(normalizePreviewColumn)
+    .filter((column): column is QueryColumn => column !== null);
+
+  return columns.length > 0 ? columns : fallbackColumns.filter((column) => column.visible);
+}
+
+function normalizePreviewColumn(value: unknown, index: number): QueryColumn | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id = readString(value['id']) || `preview-column-${index + 1}`;
+  const alias = createSafeSqlAlias(readString(value['alias']) || id) || id;
+
+  return {
+    id,
+    fieldId: readString(value['fieldId']) || id,
+    expression: readString(value['expression']) || id,
+    alias,
+    visible: readBoolean(value['visible'], true),
+    sortDirection: readSortDirection(value['sortDirection']),
+    ...(readOptionalNumber(value['sortOrder']) !== null
+      ? { sortOrder: readOptionalNumber(value['sortOrder']) ?? undefined }
+      : {}),
+    ...(typeof value['groupBy'] === 'boolean' ? { groupBy: value['groupBy'] } : {}),
+    ...(readString(value['criteria']) ? { criteria: readString(value['criteria']) } : {}),
+    ...(readStringArray(value['orCriteria']).length > 0
+      ? { orCriteria: readStringArray(value['orCriteria']) }
+      : {}),
+  };
+}
+
+function normalizePreviewRows(value: unknown): readonly PreviewRow[] {
+  return readArray(value)
+    .map((row, index) => normalizePreviewRow(row, index))
+    .filter((row): row is PreviewRow => row !== null);
+}
+
+function normalizePreviewRow(value: unknown, index: number): PreviewRow | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const rawCells = isRecord(value['cells']) ? value['cells'] : value;
+  const cells: Record<string, string | number | boolean | null> = {};
+
+  for (const [key, cellValue] of Object.entries(rawCells)) {
+    if (key !== 'id') {
+      cells[key] = normalizeCellValue(cellValue);
+    }
+  }
+
+  return {
+    id: readString(value['id']) || `preview-row-${index + 1}`,
+    cells,
+  };
+}
+
+function normalizeCellValue(value: unknown): string | number | boolean | null {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
+    return value;
+  }
+
+  return String(value);
+}
+
+function readValidationStatus(
+  value: unknown,
+  issues: readonly string[],
+): QueryValidationResponse['status'] {
+  if (value === 'valid' || value === 'invalid' || value === 'error') {
+    return value;
+  }
+
+  return issues.length > 0 ? 'invalid' : 'valid';
+}
+
+function readPreviewStatus(
+  value: unknown,
+  issues: readonly string[],
+): QueryPreviewResponse['status'] {
+  if (value === 'ready' || value === 'invalid' || value === 'error') {
+    return value;
+  }
+
+  return issues.length > 0 ? 'invalid' : 'ready';
+}
+
 function readString(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
@@ -607,8 +1141,23 @@ function readOptionalNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function readBoundedInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const numberValue =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number.parseInt(value, 10)
+        : Number.NaN;
+
+  if (!Number.isFinite(numberValue)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, Math.trunc(numberValue)));
+}
+
 function uniqueStrings(values: readonly string[]): readonly string[] {
-  return [...new Set(values.filter((value) => value.trim().length > 0))];
+  return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
 }
 
 function readJoinType(value: unknown): QueryJoinType {
@@ -651,6 +1200,8 @@ function normalizeParameter(value: unknown, index: number): QueryParameter | nul
   }
 
   const name = createSafeParameterName(readString(value['name']) || `Parameter${index + 1}`);
+  const kind = readParameterKind(value['kind']);
+  const sourceFieldId = kind === 'dynamic' ? readString(value['sourceFieldId']) : '';
 
   return {
     id: readString(value['id']) || `parameter-${index + 1}`,
@@ -659,7 +1210,24 @@ function normalizeParameter(value: unknown, index: number): QueryParameter | nul
     type: readFieldType(value['type']),
     required: typeof value['required'] === 'boolean' ? value['required'] : false,
     defaultValue: readString(value['defaultValue']),
+    kind,
+    ...(sourceFieldId ? { sourceFieldId } : {}),
+    lookup: normalizeParameterLookup(value['lookup']),
   };
+}
+
+function normalizeParameterLookup(value: unknown): QueryParameter['lookup'] {
+  const rawLookup = isRecord(value) ? value : {};
+
+  return {
+    enabled: readBoolean(rawLookup['enabled'], false),
+    multiple: readBoolean(rawLookup['multiple'], false),
+    options: readStringArray(rawLookup['options']),
+  };
+}
+
+function readParameterKind(value: unknown): NonNullable<QueryParameter['kind']> {
+  return value === 'dynamic' ? 'dynamic' : 'static';
 }
 
 function readFieldType(value: unknown): FieldType {

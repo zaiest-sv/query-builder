@@ -181,6 +181,24 @@
                 (input)="updateSubqueryAlias(subquery.id, $event)"
               />
             </label>
+            <label class="subquery-editor__wide">
+              Description
+              <input
+                type="text"
+                [value]="subquery.description || ''"
+                (input)="updateSubqueryDescription(subquery.id, $event)"
+              />
+            </label>
+            <label>
+              Preview rows
+              <input
+                type="number"
+                min="1"
+                max="500"
+                [value]="subqueryPreviewLimit(subquery)"
+                (input)="updateSubqueryPreviewLimit(subquery.id, $event)"
+              />
+            </label>
           </div>
 
           <div class="subquery-state">
@@ -188,6 +206,11 @@
               <span class="subquery-state__pill subquery-state__pill--ready">Ready</span>
             } @else {
               <span class="subquery-state__pill subquery-state__pill--warning">Needs setup</span>
+            }
+            @if (subqueryUsedBy(subquery).length > 0) {
+              <span class="subquery-state__pill subquery-state__pill--locked">
+                Used by {{ subqueryUsedBy(subquery).join(', ') }}
+              </span>
             }
             <span>{{ subquerySourceCount(subquery) }} sources</span>
             <span>{{ outputColumnsForSubquery(subquery).length }} outputs</span>
@@ -222,6 +245,7 @@
 
           <div class="subquery-actions">
             <button type="button" (click)="store.selectSubquery(subquery.id)">Edit</button>
+            <button type="button" (click)="copySubquery(subquery.id)">Copy</button>
             <button
               type="button"
               [disabled]="!canUseSubqueryAsSource(subquery.id)"
@@ -232,7 +256,13 @@
             <button
               class="subquery-actions__danger"
               type="button"
-              (click)="store.removeSubquery(subquery.id)"
+              [disabled]="!store.canRemoveSubquery(subquery.id)"
+              [title]="
+                store.canRemoveSubquery(subquery.id)
+                  ? 'Remove subquery'
+                  : 'Subquery is used as a datasource'
+              "
+              (click)="removeSubquery(subquery.id)"
             >
               x
             </button>

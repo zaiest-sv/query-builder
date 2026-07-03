@@ -2,11 +2,17 @@ import { inject, Injectable } from '@angular/core';
 import {
   DataSourceField,
   DataSourceTable,
+  QueryJoin,
   QueryDocument,
   QuerySubquery,
   ReportDefinition,
 } from '../models/report-definition.model';
 import { QueryCrosstabConfigService } from './query-crosstab-config.service';
+import {
+  findConflictingJoinPairIds,
+  findDuplicateJoinPairIds,
+  getJoinTablePair,
+} from './query-join-graph.service';
 import { createSubqueryTableId, parseSubqueryTableId } from './query-subquery-datasource.service';
 
 @Injectable({ providedIn: 'root' })
@@ -82,12 +88,18 @@ export class QueryValidationService {
     }
 
     const subqueryAliases = new Set<string>();
+    const subqueryNames = new Set<string>();
 
     for (const subquery of report.subqueries) {
       const alias = subquery.alias.trim().toLowerCase();
+      const name = subquery.name.trim().toLowerCase();
 
-      if (!subquery.name.trim()) {
+      if (!name) {
         issues.push(`Subquery ${subquery.id} name cannot be empty.`);
+      } else if (subqueryNames.has(name)) {
+        issues.push(`Subquery name ${subquery.name} is duplicated.`);
+      } else {
+        subqueryNames.add(name);
       }
 
       if (!alias) {
@@ -96,6 +108,13 @@ export class QueryValidationService {
         issues.push(`Subquery alias ${subquery.alias} is duplicated.`);
       } else {
         subqueryAliases.add(alias);
+      }
+
+      if (
+        subquery.settings?.previewLimit !== undefined &&
+        (subquery.settings.previewLimit < 1 || subquery.settings.previewLimit > 500)
+      ) {
+        issues.push(`Subquery ${subquery.name} preview limit must be between 1 and 500.`);
       }
 
       issues.push(
@@ -170,6 +189,7 @@ export class QueryValidationService {
     const issues: string[] = [];
     const aliases = new Set<string>();
     const parameterNames = new Set<string>();
+    const dynamicSourceFieldIds = new Set<string>();
 
     if (query.sourceTableIds.length === 0) {
       issues.push(`${label}: select at least one datasource table.`);
@@ -252,6 +272,64 @@ export class QueryValidationService {
       if (!parameter.label.trim()) {
         issues.push(`${label}: parameter ${parameter.name || parameter.id} label cannot be empty.`);
       }
+
+      if (parameter.kind === 'dynamic') {
+        const sourceFieldId = parameter.sourceFieldId ?? '';
+        const sourceField = fieldLookup.get(sourceFieldId);
+
+        if (!sourceFieldId) {
+          issues.push(`${label}: dynamic parameter ${parameter.name} must select a source field.`);
+        } else if (!sourceField) {
+          issues.push(`${label}: dynamic parameter ${parameter.name} uses a missing source field.`);
+        } else {
+          if (!query.sourceTableIds.includes(sourceField.tableId)) {
+            issues.push(
+              `${label}: dynamic parameter ${parameter.name} uses an unselected datasource.`,
+            );
+          }
+
+          if (sourceField.type !== parameter.type) {
+            issues.push(
+              `${label}: dynamic parameter ${parameter.name} type must match ${sourceField.label}.`,
+            );
+          }
+        }
+
+        if (sourceFieldId) {
+          const normalizedSourceFieldId = sourceFieldId.toLowerCase();
+
+          if (dynamicSourceFieldIds.has(normalizedSourceFieldId)) {
+            issues.push(
+              `${label}: dynamic criteria for ${sourceField?.label ?? sourceFieldId} is duplicated.`,
+            );
+          } else {
+            dynamicSourceFieldIds.add(normalizedSourceFieldId);
+          }
+        }
+      }
+
+      if (parameter.lookup?.enabled) {
+        if (parameter.lookup.options.length === 0) {
+          issues.push(`${label}: lookup parameter ${parameter.name} must define options.`);
+        }
+
+        const selectedValues = parameter.lookup.multiple
+          ? parameter.defaultValue
+              .split(',')
+              .map((value) => value.trim())
+              .filter(Boolean)
+          : parameter.defaultValue
+            ? [parameter.defaultValue]
+            : [];
+        const optionSet = new Set(parameter.lookup.options.map((option) => option.toLowerCase()));
+        const invalidValues = selectedValues.filter((value) => !optionSet.has(value.toLowerCase()));
+
+        if (invalidValues.length > 0) {
+          issues.push(
+            `${label}: lookup parameter ${parameter.name} has values outside allowed options (${invalidValues.join(', ')}).`,
+          );
+        }
+      }
     }
 
     for (const join of query.joins) {
@@ -282,6 +360,48 @@ export class QueryValidationService {
       }
     }
 
+    issues.push(...createJoinPairIssues(query.joins, label, fieldLookup));
+
     return issues;
   }
+}
+
+function createJoinPairIssues(
+  joins: readonly QueryJoin[],
+  label: string,
+  fieldLookup: ReadonlyMap<string, DataSourceField>,
+): readonly string[] {
+  const issues: string[] = [];
+  const duplicateJoinIds = findDuplicateJoinPairIds(joins, fieldLookup);
+  const conflictingJoinIds = findConflictingJoinPairIds(joins, fieldLookup);
+  const reportedPairKeys = new Set<string>();
+
+  for (const join of joins) {
+    if (!duplicateJoinIds.has(join.id)) {
+      continue;
+    }
+
+    const pair = getJoinTablePair(join, fieldLookup);
+
+    if (!pair || reportedPairKeys.has(pair.key)) {
+      continue;
+    }
+
+    const joinsForPair = joins.filter(
+      (currentJoin) => getJoinTablePair(currentJoin, fieldLookup)?.key === pair.key,
+    );
+    const joinIds = joinsForPair.map((currentJoin) => currentJoin.id).join(', ');
+    const typeList = Array.from(new Set(joinsForPair.map((currentJoin) => currentJoin.type))).join(
+      ', ',
+    );
+
+    issues.push(
+      conflictingJoinIds.has(join.id)
+        ? `${label}: joins ${joinIds} connect the same datasource pair with conflicting join types (${typeList}).`
+        : `${label}: joins ${joinIds} connect the same datasource pair. Merge their conditions into one join.`,
+    );
+    reportedPairKeys.add(pair.key);
+  }
+
+  return issues;
 }

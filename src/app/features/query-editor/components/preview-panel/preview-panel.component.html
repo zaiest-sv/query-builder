@@ -2,9 +2,67 @@
   <div class="section-heading">
     <h2>Preview · {{ store.activeQueryLabel() }}</h2>
     <span>
-      {{ store.activePreviewRows().length }} rows ·
-      {{ store.activePreviewColumns().length }} visible columns
+      {{ previewRows().length }} {{ previewRowSourceLabel() }} rows ·
+      {{ previewColumns().length }} visible columns
     </span>
+  </div>
+
+  <div class="preview-controls">
+    <div class="preview-parameters">
+      @if (store.activeQuery().parameters.length === 0) {
+        <span class="preview-parameter-empty">No parameters</span>
+      } @else {
+        @for (parameter of store.activeQuery().parameters; track parameter.id) {
+          <label>
+            {{ parameter.label }}
+            @if (parameter.lookup?.enabled && !parameter.lookup?.multiple) {
+              <select
+                [value]="parameter.defaultValue"
+                (change)="updateParameterValue(parameter.id, $event)"
+              >
+                <option value="">empty</option>
+                @for (option of parameter.lookup?.options ?? []; track option) {
+                  <option [value]="option">{{ option }}</option>
+                }
+              </select>
+            } @else {
+              <input
+                [type]="parameterInputType(parameter)"
+                [value]="parameter.defaultValue"
+                (input)="updateParameterValue(parameter.id, $event)"
+              />
+            }
+          </label>
+        }
+      }
+    </div>
+    <div class="preview-actions">
+      <button
+        class="button button--secondary"
+        type="button"
+        [disabled]="store.serverPreview().status === 'loading'"
+        (click)="runPreview()"
+      >
+        Run Preview
+      </button>
+      <button
+        class="button button--secondary"
+        type="button"
+        [disabled]="store.serverValidation().status === 'checking'"
+        (click)="validatePreview()"
+      >
+        Validate
+      </button>
+      <span
+        class="server-state"
+        [class.server-state--ready]="store.serverPreview().status === 'ready'"
+        [class.server-state--invalid]="
+          store.serverPreview().status === 'invalid' || store.serverPreview().status === 'error'
+        "
+      >
+        {{ store.serverPreview().message }}
+      </span>
+    </div>
   </div>
 
   <div class="preview-summary">
@@ -12,9 +70,19 @@
     <span>{{ store.activePreviewSourceRows().length }} rows after column criteria</span>
     <span>{{ store.activeQuery().filters.length }} filters</span>
     <span>{{ store.activeValidationIssues().length }} validation issues</span>
+    <span>{{ store.serverValidation().message }}</span>
   </div>
 
-  @if (store.activeValidationIssues().length > 0) {
+  @if (store.serverPreview().issues.length > 0) {
+    <div class="preview-validation">
+      <strong>Server preview needs attention</strong>
+      <ul>
+        @for (issue of store.serverPreview().issues; track issue) {
+          <li>{{ issue }}</li>
+        }
+      </ul>
+    </div>
+  } @else if (store.activeValidationIssues().length > 0) {
     <div class="preview-validation">
       <strong>Preview needs attention</strong>
       <ul>
@@ -25,12 +93,12 @@
     </div>
   }
 
-  @if (store.activePreviewColumns().length === 0) {
+  @if (previewColumns().length === 0) {
     <div class="preview-empty">
       <h3>No visible columns</h3>
       <p>Enable at least one query column to preview report output.</p>
     </div>
-  } @else if (store.activePreviewRows().length === 0) {
+  } @else if (previewRows().length === 0) {
     <div class="preview-empty">
       <h3>No matching rows</h3>
       <p>Current filters or column criteria return no mock records.</p>
@@ -40,7 +108,7 @@
       <table class="data-table">
         <thead>
           <tr>
-            @for (column of store.activePreviewColumns(); track column.id) {
+            @for (column of previewColumns(); track column.id) {
               <th [class.data-table__sorted]="column.sortDirection !== 'none'">
                 <span>{{ column.alias }}</span>
                 @if (fieldForColumn(column.fieldId); as field) {
@@ -54,9 +122,9 @@
           </tr>
         </thead>
         <tbody>
-          @for (row of store.activePreviewRows(); track row.id) {
+          @for (row of previewRows(); track row.id) {
             <tr>
-              @for (column of store.activePreviewColumns(); track column.id) {
+              @for (column of previewColumns(); track column.id) {
                 <td>{{ formatValue(row.cells[column.id]) }}</td>
               }
             </tr>

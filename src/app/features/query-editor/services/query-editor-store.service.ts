@@ -25,10 +25,17 @@ import {
 } from '../models/report-definition.model';
 import { CrosstabEngineService } from './crosstab-engine.service';
 import { createSafeSqlAlias, QueryCrosstabConfigService } from './query-crosstab-config.service';
-import { QUERY_EDITOR_API } from './query-editor-api.service';
+import {
+  QUERY_EDITOR_API,
+  QueryPreviewRequest,
+  QueryPreviewResponse,
+  QueryValidationResponse,
+} from './query-editor-api.service';
 import {
   areJoinConditionsEqual,
+  findConflictingJoinPairIds,
   findDuplicateJoinConditionIds,
+  findDuplicateJoinPairIds,
   JoinDropAssessment,
   joinTouchesTable,
   QueryJoinGraphService,
@@ -43,6 +50,24 @@ export type { JoinDropAssessment, JoinDropMode } from './query-join-graph.servic
 interface EditorLoadState {
   readonly status: 'loading' | 'ready' | 'error';
   readonly message: string;
+}
+
+interface ServerValidationState {
+  readonly status: 'idle' | 'checking' | QueryValidationResponse['status'];
+  readonly message: string;
+  readonly issues: readonly string[];
+  readonly checkedAt?: string;
+}
+
+interface ServerPreviewState {
+  readonly status: 'idle' | 'loading' | QueryPreviewResponse['status'];
+  readonly message: string;
+  readonly columns: readonly QueryColumn[];
+  readonly rows: readonly PreviewRow[];
+  readonly issues: readonly string[];
+  readonly generatedSql: string;
+  readonly executionPlan?: string;
+  readonly executedAt?: string;
 }
 
 export type CanvasJoinStatus = 'valid' | 'warning' | 'error';
@@ -118,6 +143,19 @@ export class QueryEditorStore {
     status: 'idle',
     message: 'No changes saved yet',
   });
+  private readonly serverValidationSignal = signal<ServerValidationState>({
+    status: 'idle',
+    message: 'Server validation has not run',
+    issues: [],
+  });
+  private readonly serverPreviewSignal = signal<ServerPreviewState>({
+    status: 'idle',
+    message: 'Server preview has not run',
+    columns: [],
+    rows: [],
+    issues: [],
+    generatedSql: '',
+  });
   private sequence = 1;
 
   readonly metadata = this.metadataSignal.asReadonly();
@@ -129,6 +167,8 @@ export class QueryEditorStore {
   readonly isDirty = this.dirtySignal.asReadonly();
   readonly loadState = this.loadStateSignal.asReadonly();
   readonly saveState = this.saveStateSignal.asReadonly();
+  readonly serverValidation = this.serverValidationSignal.asReadonly();
+  readonly serverPreview = this.serverPreviewSignal.asReadonly();
 
   readonly baseTables = computed(() => this.metadata().flatMap((group) => group.tables));
   readonly baseFieldLookup = computed(
@@ -319,11 +359,24 @@ export class QueryEditorStore {
       this.fieldLookup(),
     ),
   );
-  readonly canvasJoins = computed(() =>
-    this.activeQuery()
-      .joins.map((join) => createCanvasJoin(join, this.tableLookup(), this.fieldLookup()))
-      .filter((join): join is CanvasJoin => join !== null),
-  );
+  readonly canvasJoins = computed(() => {
+    const activeQuery = this.activeQuery();
+    const fieldLookup = this.fieldLookup();
+    const duplicatePairJoinIds = findDuplicateJoinPairIds(activeQuery.joins, fieldLookup);
+    const conflictingPairJoinIds = findConflictingJoinPairIds(activeQuery.joins, fieldLookup);
+
+    return activeQuery.joins
+      .map((join) =>
+        createCanvasJoin(
+          join,
+          this.tableLookup(),
+          fieldLookup,
+          duplicatePairJoinIds,
+          conflictingPairJoinIds,
+        ),
+      )
+      .filter((join): join is CanvasJoin => join !== null);
+  });
   readonly selectedCanvasJoin = computed(() => {
     const selection = this.canvasSelection();
 
@@ -376,6 +429,19 @@ export class QueryEditorStore {
             status: 'idle',
             message: 'No changes saved yet',
           });
+          this.serverValidationSignal.set({
+            status: 'idle',
+            message: 'Server validation has not run',
+            issues: [],
+          });
+          this.serverPreviewSignal.set({
+            status: 'idle',
+            message: 'Server preview has not run',
+            columns: [],
+            rows: [],
+            issues: [],
+            generatedSql: '',
+          });
         },
         error: () => {
           this.loadStateSignal.set({
@@ -412,6 +478,10 @@ export class QueryEditorStore {
       id,
       name: `Subquery ${index}`,
       alias: `sq${index}`,
+      description: '',
+      settings: {
+        previewLimit: 100,
+      },
       query: createEmptyQueryDocument(),
     };
 
@@ -427,7 +497,7 @@ export class QueryEditorStore {
   updateSubqueryName(subqueryId: string, name: string): void {
     const nextName = name.trim();
 
-    if (!nextName) {
+    if (!nextName || !this.isSubqueryNameAvailable(subqueryId, nextName)) {
       return;
     }
 
@@ -443,7 +513,7 @@ export class QueryEditorStore {
   updateSubqueryAlias(subqueryId: string, alias: string): void {
     const nextAlias = createSafeSqlAlias(alias);
 
-    if (!nextAlias) {
+    if (!nextAlias || !this.isSubqueryAliasAvailable(subqueryId, nextAlias)) {
       return;
     }
 
@@ -456,7 +526,190 @@ export class QueryEditorStore {
     this.markDirty();
   }
 
+  updateSubqueryDescription(subqueryId: string, description: string): void {
+    this.reportSignal.update((report) => ({
+      ...report,
+      subqueries: report.subqueries.map((subquery) =>
+        subquery.id === subqueryId ? { ...subquery, description } : subquery,
+      ),
+    }));
+    this.markDirty();
+  }
+
+  updateSubqueryPreviewLimit(subqueryId: string, previewLimit: number): void {
+    const nextPreviewLimit = Math.min(500, Math.max(1, Math.trunc(previewLimit || 100)));
+
+    this.reportSignal.update((report) => ({
+      ...report,
+      subqueries: report.subqueries.map((subquery) =>
+        subquery.id === subqueryId
+          ? {
+              ...subquery,
+              settings: {
+                previewLimit: nextPreviewLimit,
+              },
+            }
+          : subquery,
+      ),
+    }));
+    this.markDirty();
+  }
+
+  copySubquery(subqueryId: string): void {
+    const sourceSubquery = this.report().subqueries.find((subquery) => subquery.id === subqueryId);
+
+    if (!sourceSubquery) {
+      return;
+    }
+
+    const id = this.createId('subquery');
+    const name = createUniqueSubqueryName(`${sourceSubquery.name} Copy`, this.report().subqueries);
+    const alias = createUniqueSubqueryAlias(
+      `${sourceSubquery.alias}_copy`,
+      this.report().subqueries,
+    );
+    const copiedSubquery: QuerySubquery = {
+      ...sourceSubquery,
+      id,
+      name,
+      alias,
+      query: cloneQueryDocumentWithNewIds(sourceSubquery.query, (prefix) => this.createId(prefix)),
+    };
+
+    this.reportSignal.update((report) => ({
+      ...report,
+      subqueries: [...report.subqueries, copiedSubquery],
+    }));
+    this.activeQueryIdSignal.set(id);
+    this.selectedTableIdSignal.set(copiedSubquery.query.sourceTableIds[0] ?? '');
+    this.clearCanvasSelection();
+    this.markDirty();
+  }
+
+  wrapSourceTableIntoDerivedTable(tableId: string): void {
+    const table = this.tableLookup().get(tableId);
+    const activeQuery = this.activeQuery();
+
+    if (
+      !table ||
+      table.sourceType === 'subquery' ||
+      !activeQuery.sourceTableIds.includes(tableId)
+    ) {
+      return;
+    }
+
+    const id = this.createId('subquery');
+    const subqueryTableId = this.subqueryDatasource.createTableId(id);
+    const name = createUniqueSubqueryName(`${table.label} Derived`, this.report().subqueries);
+    const alias = createUniqueSubqueryAlias(`${table.alias}_derived`, this.report().subqueries);
+    const fieldIdMap = new Map<string, string>(
+      table.fields.map((field) => [field.id, `${subqueryTableId}.${field.name}`] as const),
+    );
+    const outputAliases = new Set(table.fields.map((field) => field.name.toLowerCase()));
+    const additionalOutputColumns = activeQuery.columns
+      .filter((column) => this.fieldLookup().get(column.fieldId)?.tableId === table.id)
+      .filter((column) => {
+        const field = this.fieldLookup().get(column.fieldId);
+        const alias = createSafeSqlAlias(column.alias || field?.name || column.id);
+
+        return (
+          alias &&
+          !outputAliases.has(alias.toLowerCase()) &&
+          (!field || !isDefaultColumnExpression(column.expression, field) || alias !== field.name)
+        );
+      })
+      .map((column) => {
+        const field = this.fieldLookup().get(column.fieldId);
+        const alias = createSafeSqlAlias(column.alias || field?.name || column.id) || column.id;
+
+        outputAliases.add(alias.toLowerCase());
+
+        return {
+          id: this.createId('column'),
+          fieldId: column.fieldId,
+          expression: column.expression,
+          alias,
+          visible: true,
+          sortDirection: 'none' as const,
+          groupBy: false,
+          criteria: '',
+          orCriteria: ['', ''],
+        };
+      });
+    const columnIdMap = new Map<string, string>();
+
+    for (const column of activeQuery.columns) {
+      const field = this.fieldLookup().get(column.fieldId);
+      const alias = createSafeSqlAlias(column.alias || field?.name || column.id);
+
+      if (
+        field?.tableId === table.id &&
+        alias &&
+        additionalOutputColumns.some((outputColumn) => outputColumn.alias === alias)
+      ) {
+        columnIdMap.set(column.id, `${subqueryTableId}.${alias}`);
+      }
+    }
+
+    const subquery: QuerySubquery = {
+      id,
+      name,
+      alias,
+      description: `Derived table for ${table.label}`,
+      settings: {
+        previewLimit: 100,
+      },
+      query: {
+        ...createEmptyQueryDocument(),
+        sourceTableIds: [table.id],
+        columns: [
+          ...table.fields.map((field) => ({
+            id: this.createId('column'),
+            fieldId: field.id,
+            expression: field.expression,
+            alias: field.name,
+            visible: true,
+            sortDirection: 'none' as const,
+            groupBy: false,
+            criteria: '',
+            orCriteria: ['', ''],
+          })),
+          ...additionalOutputColumns,
+        ],
+        layout: {
+          tables: [{ tableId: table.id, x: 0, y: 0 }],
+        },
+      },
+    };
+    const activeQueryId = this.activeQueryId();
+    const nextSelection = replaceSelectionTable(
+      this.canvasSelection(),
+      tableId,
+      subqueryTableId,
+      fieldIdMap,
+    );
+
+    this.reportSignal.update((report) => ({
+      ...updateReportQuery(
+        {
+          ...report,
+          subqueries: [...report.subqueries, subquery],
+        },
+        activeQueryId,
+        (query) =>
+          replaceQueryTableReferences(query, tableId, subqueryTableId, fieldIdMap, columnIdMap),
+      ),
+    }));
+    this.selectedTableIdSignal.set(subqueryTableId);
+    this.canvasSelectionSignal.set(nextSelection);
+    this.markDirty();
+  }
+
   removeSubquery(subqueryId: string): void {
+    if (!this.canRemoveSubquery(subqueryId)) {
+      return;
+    }
+
     const tableId = this.subqueryDatasource.createTableId(subqueryId);
 
     this.reportSignal.update((report) => ({
@@ -478,12 +731,81 @@ export class QueryEditorStore {
     this.markDirty();
   }
 
+  useSubqueryInMain(subqueryId: string): void {
+    const tableId = this.subqueryDatasource.createTableId(subqueryId);
+
+    if (!this.canUseTableAsSourceInQuery(tableId, 'main')) {
+      return;
+    }
+
+    this.activeQueryIdSignal.set('main');
+    this.selectedTableIdSignal.set(tableId);
+    if (this.ensureSourceTable(tableId)) {
+      this.markDirty();
+    }
+    this.selectCanvasTable(tableId);
+  }
+
   subqueryTableId(subqueryId: string): string {
     return this.subqueryDatasource.createTableId(subqueryId);
   }
 
   canUseTableAsSource(tableId: string): boolean {
     return this.tableLookup().has(tableId) && !this.wouldCreateSubqueryDependencyCycle(tableId);
+  }
+
+  canUseTableAsSourceInQuery(tableId: string, queryId: QueryWorkspaceId): boolean {
+    return (
+      this.tableLookup().has(tableId) && !this.wouldCreateSubqueryDependencyCycle(tableId, queryId)
+    );
+  }
+
+  isSubqueryNameAvailable(subqueryId: string, name: string): boolean {
+    const normalizedName = name.trim().toLowerCase();
+
+    return (
+      normalizedName.length > 0 &&
+      !this.report().subqueries.some(
+        (subquery) =>
+          subquery.id !== subqueryId && subquery.name.trim().toLowerCase() === normalizedName,
+      )
+    );
+  }
+
+  isSubqueryAliasAvailable(subqueryId: string, alias: string): boolean {
+    const normalizedAlias = createSafeSqlAlias(alias).toLowerCase();
+
+    return (
+      normalizedAlias.length > 0 &&
+      !this.report().subqueries.some(
+        (subquery) =>
+          subquery.id !== subqueryId && subquery.alias.toLowerCase() === normalizedAlias,
+      )
+    );
+  }
+
+  subqueryUsedBy(subqueryId: string): readonly string[] {
+    const tableId = this.subqueryDatasource.createTableId(subqueryId);
+    const usedBy: string[] = [];
+
+    if (this.report().query.sourceTableIds.includes(tableId)) {
+      usedBy.push('Main Query');
+    }
+
+    for (const subquery of this.report().subqueries) {
+      if (subquery.id !== subqueryId && subquery.query.sourceTableIds.includes(tableId)) {
+        usedBy.push(subquery.name);
+      }
+    }
+
+    return usedBy;
+  }
+
+  canRemoveSubquery(subqueryId: string): boolean {
+    return (
+      this.report().subqueries.some((subquery) => subquery.id === subqueryId) &&
+      this.subqueryUsedBy(subqueryId).length === 0
+    );
   }
 
   hasSubqueryDependencyCycle(subqueryId: string): boolean {
@@ -996,6 +1318,16 @@ export class QueryEditorStore {
     this.updateColumn(columnId, { alias });
   }
 
+  updateColumnExpression(columnId: string, expression: string): void {
+    const nextExpression = expression.trim();
+
+    if (!nextExpression) {
+      return;
+    }
+
+    this.updateColumn(columnId, { expression: nextExpression });
+  }
+
   updateColumnSort(columnId: string, sortDirection: SortDirection): void {
     this.updateColumn(columnId, { sortDirection });
   }
@@ -1104,6 +1436,12 @@ export class QueryEditorStore {
       type: field.type,
       required: true,
       defaultValue: filter.value || defaultParameterValue(field.type),
+      kind: 'static',
+      lookup: {
+        enabled: false,
+        multiple: false,
+        options: [],
+      },
     };
 
     this.updateActiveQuery((query) => ({
@@ -1127,10 +1465,69 @@ export class QueryEditorStore {
       type: 'string',
       required: false,
       defaultValue: '',
+      kind: 'static',
+      lookup: {
+        enabled: false,
+        multiple: false,
+        options: [],
+      },
     };
 
     this.updateActiveQuery((query) => ({
       ...query,
+      parameters: [...query.parameters, parameter],
+    }));
+    this.markDirty();
+  }
+
+  addDynamicCriteria(fieldId: string): void {
+    const field = this.fieldLookup().get(fieldId);
+
+    if (!field || !this.canUseTableAsSource(field.tableId)) {
+      return;
+    }
+
+    const existingParameter = this.activeQuery().parameters.find(
+      (parameter) => parameter.kind === 'dynamic' && parameter.sourceFieldId === fieldId,
+    );
+
+    if (existingParameter) {
+      return;
+    }
+
+    this.ensureSourceTable(field.tableId);
+    const parameterName = createUniqueParameterName(
+      createParameterNameFromField(field),
+      this.activeQuery().parameters,
+    );
+    const parameter: QueryParameter = {
+      id: this.createId('parameter'),
+      name: parameterName,
+      label: field.label,
+      type: field.type,
+      required: false,
+      defaultValue: '',
+      kind: 'dynamic',
+      sourceFieldId: field.id,
+      lookup: {
+        enabled: true,
+        multiple: false,
+        options: createLookupOptionsForField(field.id, this.previewDataRows()),
+      },
+    };
+
+    this.updateActiveQuery((query) => ({
+      ...query,
+      filters: [
+        ...query.filters,
+        {
+          id: this.createId('filter'),
+          fieldId,
+          operator: 'equals',
+          value: '',
+          parameterName: parameter.name,
+        },
+      ],
       parameters: [...query.parameters, parameter],
     }));
     this.markDirty();
@@ -1168,12 +1565,128 @@ export class QueryEditorStore {
     this.updateParameter(parameterId, { type });
   }
 
+  updateParameterKind(parameterId: string, kind: NonNullable<QueryParameter['kind']>): void {
+    const parameter = this.activeQuery().parameters.find(
+      (currentParameter) => currentParameter.id === parameterId,
+    );
+
+    if (!parameter) {
+      return;
+    }
+
+    if (kind === 'static') {
+      this.updateParameter(parameterId, {
+        kind,
+        sourceFieldId: undefined,
+      });
+      return;
+    }
+
+    const sourceField =
+      this.fieldLookup().get(parameter.sourceFieldId ?? '') ?? this.fieldsForSelectedSources()[0];
+
+    this.updateParameter(parameterId, {
+      kind,
+      ...(sourceField
+        ? {
+            sourceFieldId: sourceField.id,
+            type: sourceField.type,
+            label: sourceField.label,
+            lookup: {
+              enabled: true,
+              multiple: false,
+              options: createLookupOptionsForField(sourceField.id, this.previewDataRows()),
+            },
+          }
+        : {}),
+    });
+  }
+
+  updateParameterSourceField(parameterId: string, fieldId: string): void {
+    const field = this.fieldLookup().get(fieldId);
+
+    if (!field) {
+      return;
+    }
+
+    this.updateParameter(parameterId, {
+      sourceFieldId: field.id,
+      type: field.type,
+      label: field.label,
+      lookup: {
+        enabled: true,
+        multiple: false,
+        options: createLookupOptionsForField(field.id, this.previewDataRows()),
+      },
+    });
+  }
+
   updateParameterRequired(parameterId: string, required: boolean): void {
     this.updateParameter(parameterId, { required });
   }
 
   updateParameterDefaultValue(parameterId: string, defaultValue: string): void {
     this.updateParameter(parameterId, { defaultValue });
+  }
+
+  updateParameterLookupEnabled(parameterId: string, enabled: boolean): void {
+    const parameter = this.activeQuery().parameters.find(
+      (currentParameter) => currentParameter.id === parameterId,
+    );
+
+    if (!parameter) {
+      return;
+    }
+
+    const sourceFieldId = parameter.sourceFieldId ?? '';
+    const generatedOptions =
+      parameter.lookup?.options.length || !sourceFieldId
+        ? (parameter.lookup?.options ?? [])
+        : createLookupOptionsForField(sourceFieldId, this.previewDataRows());
+
+    this.updateParameter(parameterId, {
+      lookup: {
+        enabled,
+        multiple: parameter.lookup?.multiple ?? false,
+        options: generatedOptions,
+      },
+    });
+  }
+
+  updateParameterLookupMultiple(parameterId: string, multiple: boolean): void {
+    const parameter = this.activeQuery().parameters.find(
+      (currentParameter) => currentParameter.id === parameterId,
+    );
+
+    if (!parameter) {
+      return;
+    }
+
+    this.updateParameter(parameterId, {
+      lookup: {
+        enabled: parameter.lookup?.enabled ?? false,
+        multiple,
+        options: parameter.lookup?.options ?? [],
+      },
+    });
+  }
+
+  updateParameterLookupOptions(parameterId: string, value: string): void {
+    const parameter = this.activeQuery().parameters.find(
+      (currentParameter) => currentParameter.id === parameterId,
+    );
+
+    if (!parameter) {
+      return;
+    }
+
+    this.updateParameter(parameterId, {
+      lookup: {
+        enabled: parameter.lookup?.enabled ?? false,
+        multiple: parameter.lookup?.multiple ?? false,
+        options: parseLookupOptions(value),
+      },
+    });
   }
 
   removeParameter(parameterId: string): void {
@@ -1310,6 +1823,111 @@ export class QueryEditorStore {
     this.markDirty();
   }
 
+  validateOnServer(): void {
+    const validateReport = this.api.validateReport?.bind(this.api);
+
+    if (!validateReport) {
+      const issues = this.validationIssues();
+
+      this.serverValidationSignal.set({
+        status: issues.length > 0 ? 'invalid' : 'valid',
+        issues,
+        checkedAt: new Date().toLocaleTimeString(),
+        message:
+          issues.length > 0
+            ? `${issues.length} local validation issue${issues.length === 1 ? '' : 's'}`
+            : 'Local validation passed',
+      });
+      return;
+    }
+
+    this.serverValidationSignal.set({
+      status: 'checking',
+      message: 'Running server validation',
+      issues: [],
+    });
+
+    validateReport(this.report())
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (response) => {
+          this.serverValidationSignal.set({
+            status: response.status,
+            message: response.message,
+            issues: response.issues,
+            checkedAt: new Date(response.checkedAt).toLocaleTimeString(),
+          });
+        },
+        error: () => {
+          this.serverValidationSignal.set({
+            status: 'error',
+            message: 'Server validation failed',
+            issues: [],
+          });
+        },
+      });
+  }
+
+  runServerPreview(limit = 100): void {
+    const previewReport = this.api.previewReport?.bind(this.api);
+    const request = this.createPreviewRequest(limit);
+
+    if (!previewReport) {
+      const issues = this.activeValidationIssues();
+      const rows = this.activePreviewRows().slice(0, Math.max(1, limit));
+
+      this.serverPreviewSignal.set({
+        status: issues.length > 0 ? 'invalid' : 'ready',
+        message:
+          issues.length > 0
+            ? 'Local preview validation failed'
+            : `Local preview returned ${rows.length} row${rows.length === 1 ? '' : 's'}`,
+        columns: this.activePreviewColumns(),
+        rows,
+        issues,
+        generatedSql: this.activeSql(),
+        executedAt: new Date().toLocaleTimeString(),
+      });
+      return;
+    }
+
+    this.serverPreviewSignal.set({
+      status: 'loading',
+      message: 'Running server preview',
+      columns: [],
+      rows: [],
+      issues: [],
+      generatedSql: '',
+    });
+
+    previewReport(request)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (response) => {
+          this.serverPreviewSignal.set({
+            status: response.status,
+            message: response.message,
+            columns: response.columns,
+            rows: response.rows,
+            issues: response.issues,
+            generatedSql: response.generatedSql,
+            ...(response.executionPlan ? { executionPlan: response.executionPlan } : {}),
+            executedAt: new Date(response.executedAt).toLocaleTimeString(),
+          });
+        },
+        error: () => {
+          this.serverPreviewSignal.set({
+            status: 'error',
+            message: 'Server preview failed',
+            columns: [],
+            rows: [],
+            issues: [],
+            generatedSql: '',
+          });
+        },
+      });
+  }
+
   save(): void {
     const issues = this.validationIssues();
 
@@ -1346,6 +1964,15 @@ export class QueryEditorStore {
           });
         },
       });
+  }
+
+  private createPreviewRequest(limit: number): QueryPreviewRequest {
+    return {
+      report: this.report(),
+      queryId: this.activeQueryId(),
+      limit,
+      parameterValues: createParameterValues(this.activeQuery().parameters),
+    };
   }
 
   private updateColumn(columnId: string, patch: Partial<QueryColumn>): void {
@@ -1525,17 +2152,19 @@ export class QueryEditorStore {
     return true;
   }
 
-  private wouldCreateSubqueryDependencyCycle(tableId: string): boolean {
-    const activeQueryId = this.activeQueryId();
+  private wouldCreateSubqueryDependencyCycle(
+    tableId: string,
+    targetQueryId: QueryWorkspaceId = this.activeQueryId(),
+  ): boolean {
     const candidateSubqueryId = this.subqueryDatasource.parseTableId(tableId);
 
-    if (activeQueryId === 'main' || !candidateSubqueryId) {
+    if (targetQueryId === 'main' || !candidateSubqueryId) {
       return false;
     }
 
     return (
-      candidateSubqueryId === activeQueryId ||
-      this.validationService.dependsOnSubquery(this.report(), candidateSubqueryId, activeQueryId)
+      candidateSubqueryId === targetQueryId ||
+      this.validationService.dependsOnSubquery(this.report(), candidateSubqueryId, targetQueryId)
     );
   }
 
@@ -1565,6 +2194,19 @@ export class QueryEditorStore {
     this.saveStateSignal.set({
       status: 'idle',
       message: 'Unsaved changes',
+    });
+    this.serverValidationSignal.set({
+      status: 'idle',
+      message: 'Server validation is stale',
+      issues: [],
+    });
+    this.serverPreviewSignal.set({
+      status: 'idle',
+      message: 'Server preview is stale',
+      columns: [],
+      rows: [],
+      issues: [],
+      generatedSql: '',
     });
   }
 }
@@ -1642,6 +2284,78 @@ function removeTableFromQuery(
   };
 }
 
+function replaceQueryTableReferences(
+  query: QueryDocument,
+  tableId: string,
+  nextTableId: string,
+  fieldIdMap: ReadonlyMap<string, string>,
+  columnIdMap: ReadonlyMap<string, string>,
+): QueryDocument {
+  return {
+    ...query,
+    sourceTableIds: uniqueValues(
+      query.sourceTableIds.map((sourceTableId) =>
+        sourceTableId === tableId ? nextTableId : sourceTableId,
+      ),
+    ),
+    columns: query.columns.map((column) => {
+      const nextFieldId = columnIdMap.get(column.id) ?? fieldIdMap.get(column.fieldId);
+
+      return nextFieldId
+        ? {
+            ...column,
+            fieldId: nextFieldId,
+            expression: nextFieldId,
+          }
+        : column;
+    }),
+    filters: query.filters.map((filter) => ({
+      ...filter,
+      fieldId: fieldIdMap.get(filter.fieldId) ?? filter.fieldId,
+    })),
+    joins: query.joins.map((join) => ({
+      ...join,
+      conditions: join.conditions.map((condition) => ({
+        ...condition,
+        fromFieldId: fieldIdMap.get(condition.fromFieldId) ?? condition.fromFieldId,
+        toFieldId: fieldIdMap.get(condition.toFieldId) ?? condition.toFieldId,
+      })),
+    })),
+    layout: {
+      tables: query.layout.tables.map((position) =>
+        position.tableId === tableId ? { ...position, tableId: nextTableId } : position,
+      ),
+    },
+    parameters: query.parameters.map((parameter) => ({
+      ...parameter,
+      ...(parameter.sourceFieldId && fieldIdMap.has(parameter.sourceFieldId)
+        ? { sourceFieldId: fieldIdMap.get(parameter.sourceFieldId) }
+        : {}),
+    })),
+  };
+}
+
+function replaceSelectionTable(
+  selection: QueryCanvasSelection,
+  tableId: string,
+  nextTableId: string,
+  fieldIdMap: ReadonlyMap<string, string>,
+): QueryCanvasSelection {
+  if (selection.kind === 'table' && selection.tableId === tableId) {
+    return { kind: 'table', tableId: nextTableId };
+  }
+
+  if (selection.kind === 'field' && fieldIdMap.has(selection.fieldId)) {
+    return { kind: 'field', fieldId: fieldIdMap.get(selection.fieldId) ?? selection.fieldId };
+  }
+
+  return selection;
+}
+
+function uniqueValues<T>(values: readonly T[]): readonly T[] {
+  return Array.from(new Set(values));
+}
+
 function normalizeParameterName(name: string): string {
   return name.trim().replace(/^@+/, '').replace(/\s+/g, '_');
 }
@@ -1697,10 +2411,129 @@ function defaultParameterValue(type: FieldType): string {
   }
 }
 
+function createLookupOptionsForField(
+  fieldId: string,
+  rows: readonly DataRecord[],
+): readonly string[] {
+  return Array.from(
+    new Set(
+      rows
+        .map((row) => row[fieldId])
+        .filter((value): value is string | number | boolean => value !== null && value !== '')
+        .map((value) => String(value)),
+    ),
+  )
+    .sort((first, second) => first.localeCompare(second, undefined, { numeric: true }))
+    .slice(0, 50);
+}
+
+function parseLookupOptions(value: string): readonly string[] {
+  return Array.from(
+    new Set(
+      value
+        .split(/[\n,]/)
+        .map((option) => option.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function createParameterValues(
+  parameters: readonly QueryParameter[],
+): Readonly<Record<string, string>> {
+  return Object.fromEntries(
+    parameters.map((parameter) => [parameter.name, parameter.defaultValue] as const),
+  );
+}
+
+function isDefaultColumnExpression(expression: string, field: DataSourceField): boolean {
+  const normalizedExpression = expression
+    .trim()
+    .replaceAll('[', '')
+    .replaceAll(']', '')
+    .toLowerCase();
+  const defaultExpressions = new Set([
+    field.expression.toLowerCase(),
+    field.id.toLowerCase(),
+    `${field.tableId}.${field.name}`.toLowerCase(),
+    field.name.toLowerCase(),
+  ]);
+
+  return defaultExpressions.has(normalizedExpression);
+}
+
+function cloneQueryDocumentWithNewIds(
+  query: QueryDocument,
+  createId: (prefix: string) => string,
+): QueryDocument {
+  return {
+    ...query,
+    columns: query.columns.map((column) => ({ ...column, id: createId('column') })),
+    filters: query.filters.map((filter) => ({ ...filter, id: createId('filter') })),
+    joins: query.joins.map((join) => ({
+      ...join,
+      id: createId('join'),
+      conditions: join.conditions.map((condition) => ({
+        ...condition,
+        id: createId('join-condition'),
+      })),
+    })),
+    parameters: query.parameters.map((parameter) => ({ ...parameter, id: createId('parameter') })),
+    layout: {
+      tables: query.layout.tables.map((position) => ({ ...position })),
+    },
+  };
+}
+
+function createUniqueSubqueryName(baseName: string, subqueries: readonly QuerySubquery[]): string {
+  const normalizedBaseName = baseName.trim() || 'Subquery';
+  const existingNames = new Set(subqueries.map((subquery) => subquery.name.trim().toLowerCase()));
+
+  if (!existingNames.has(normalizedBaseName.toLowerCase())) {
+    return normalizedBaseName;
+  }
+
+  let suffix = 2;
+  let candidate = `${normalizedBaseName} ${suffix}`;
+
+  while (existingNames.has(candidate.toLowerCase())) {
+    suffix += 1;
+    candidate = `${normalizedBaseName} ${suffix}`;
+  }
+
+  return candidate;
+}
+
+function createUniqueSubqueryAlias(
+  baseAlias: string,
+  subqueries: readonly QuerySubquery[],
+): string {
+  const normalizedBaseAlias = createSafeSqlAlias(baseAlias) || 'sq';
+  const existingAliases = new Set(
+    subqueries.map((subquery) => subquery.alias.trim().toLowerCase()),
+  );
+
+  if (!existingAliases.has(normalizedBaseAlias.toLowerCase())) {
+    return normalizedBaseAlias;
+  }
+
+  let suffix = 2;
+  let candidate = `${normalizedBaseAlias}_${suffix}`;
+
+  while (existingAliases.has(candidate.toLowerCase())) {
+    suffix += 1;
+    candidate = `${normalizedBaseAlias}_${suffix}`;
+  }
+
+  return candidate;
+}
+
 function createCanvasJoin(
   join: QueryJoin,
   tableLookup: ReadonlyMap<string, DataSourceTable>,
   fieldLookup: ReadonlyMap<string, DataSourceField>,
+  duplicatePairJoinIds: ReadonlySet<string>,
+  conflictingPairJoinIds: ReadonlySet<string>,
 ): CanvasJoin | null {
   const duplicateConditionIds = findDuplicateJoinConditionIds(join.conditions);
   const conditions = join.conditions
@@ -1740,6 +2573,21 @@ function createCanvasJoin(
           } satisfies CanvasJoinIssue,
         ]
       : []),
+    ...(conflictingPairJoinIds.has(join.id)
+      ? [
+          {
+            level: 'error',
+            message: 'Another join between these datasources uses a different join type.',
+          } satisfies CanvasJoinIssue,
+        ]
+      : duplicatePairJoinIds.has(join.id)
+        ? [
+            {
+              level: 'warning',
+              message: 'Another join already connects these datasources. Merge conditions here.',
+            } satisfies CanvasJoinIssue,
+          ]
+        : []),
   ];
 
   return {

@@ -1,3 +1,4 @@
+import { TestBed } from '@angular/core/testing';
 import { firstValueFrom } from 'rxjs';
 import { MOCK_REPORT } from '../data/mock-report-data';
 import { ReportDefinition } from '../models/report-definition.model';
@@ -7,11 +8,13 @@ const storageKey = 'query-builder.mock-report';
 
 describe('MockQueryEditorApiService persistence normalization', () => {
   beforeEach(() => {
+    TestBed.configureTestingModule({});
     globalThis.localStorage?.clear();
   });
 
   afterEach(() => {
     globalThis.localStorage?.clear();
+    TestBed.resetTestingModule();
   });
 
   it('migrates legacy raw stored reports and removes stale references', async () => {
@@ -78,7 +81,7 @@ describe('MockQueryEditorApiService persistence normalization', () => {
 
     globalThis.localStorage?.setItem(storageKey, JSON.stringify(staleReport));
 
-    const service = new MockQueryEditorApiService();
+    const service = TestBed.inject(MockQueryEditorApiService);
     const { report } = await firstValueFrom(service.loadReport(MOCK_REPORT.id));
     const storedReport = JSON.parse(globalThis.localStorage?.getItem(storageKey) ?? '{}') as {
       readonly schemaVersion?: number;
@@ -112,7 +115,7 @@ describe('MockQueryEditorApiService persistence normalization', () => {
   it('falls back to the baseline report and clears broken storage', async () => {
     globalThis.localStorage?.setItem(storageKey, '{not-json');
 
-    const service = new MockQueryEditorApiService();
+    const service = TestBed.inject(MockQueryEditorApiService);
     const { report } = await firstValueFrom(service.loadReport(MOCK_REPORT.id));
 
     expect(report.id).toBe(MOCK_REPORT.id);
@@ -120,6 +123,128 @@ describe('MockQueryEditorApiService persistence normalization', () => {
       MOCK_REPORT.query.columns.map((column) => column.id),
     );
     expect(globalThis.localStorage?.getItem(storageKey)).toBeNull();
+  });
+
+  it('merges persisted same-type joins for the same datasource pair', async () => {
+    const report: ReportDefinition = {
+      ...cloneValue(MOCK_REPORT),
+      query: {
+        ...cloneValue(MOCK_REPORT.query),
+        joins: [
+          ...cloneValue(MOCK_REPORT.query.joins),
+          {
+            id: 'join-encounter-patient-extra',
+            type: 'left',
+            conditions: [
+              {
+                id: 'join-encounter-patient-extra-condition',
+                fromFieldId: 'Encounter.Minutes',
+                operator: 'equals',
+                toFieldId: 'Patient.Gender',
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    globalThis.localStorage?.setItem(storageKey, JSON.stringify(report));
+
+    const service = TestBed.inject(MockQueryEditorApiService);
+    const { report: normalizedReport } = await firstValueFrom(service.loadReport(MOCK_REPORT.id));
+    const encounterPatientJoin = normalizedReport.query.joins.find(
+      (join) => join.id === 'join-encounter-patient',
+    );
+
+    expect(normalizedReport.query.joins.map((join) => join.id)).not.toContain(
+      'join-encounter-patient-extra',
+    );
+    expect(encounterPatientJoin?.conditions.map((condition) => condition.id)).toEqual([
+      'join-encounter-patient-condition-1',
+      'join-encounter-patient-extra-condition',
+    ]);
+  });
+
+  it('normalizes prompt parameter kind, source field, and lookup options', async () => {
+    const report: ReportDefinition = {
+      ...cloneValue(MOCK_REPORT),
+      query: {
+        ...cloneValue(MOCK_REPORT.query),
+        parameters: [
+          {
+            id: 'param-static-with-source',
+            name: '@Visit Status',
+            label: 'Visit Status',
+            type: 'string',
+            required: false,
+            defaultValue: 'Completed',
+            kind: 'static',
+            sourceFieldId: 'Encounter.Status',
+            lookup: {
+              enabled: true,
+              multiple: false,
+              options: [' Completed ', 'Pending', 'Completed', ' '],
+            },
+          },
+          {
+            id: 'param-provider',
+            name: '@Provider Filter',
+            label: 'Provider',
+            type: 'string',
+            required: true,
+            defaultValue: 'Dr. Harper',
+            kind: 'dynamic',
+            sourceFieldId: 'Encounter.Provider',
+            lookup: {
+              enabled: true,
+              multiple: true,
+              options: ['Dr. Harper', ' Dr. Nguyen ', 'Dr. Harper'],
+            },
+          },
+        ],
+      },
+    };
+
+    globalThis.localStorage?.setItem(storageKey, JSON.stringify(report));
+
+    const service = TestBed.inject(MockQueryEditorApiService);
+    const { report: normalizedReport } = await firstValueFrom(service.loadReport(MOCK_REPORT.id));
+    const staticParameter = normalizedReport.query.parameters.find(
+      (parameter) => parameter.id === 'param-static-with-source',
+    );
+    const dynamicParameter = normalizedReport.query.parameters.find(
+      (parameter) => parameter.id === 'param-provider',
+    );
+
+    expect(staticParameter).toEqual({
+      id: 'param-static-with-source',
+      name: 'Visit_Status',
+      label: 'Visit Status',
+      type: 'string',
+      required: false,
+      defaultValue: 'Completed',
+      kind: 'static',
+      lookup: {
+        enabled: true,
+        multiple: false,
+        options: ['Completed', 'Pending'],
+      },
+    });
+    expect(dynamicParameter).toEqual({
+      id: 'param-provider',
+      name: 'Provider_Filter',
+      label: 'Provider',
+      type: 'string',
+      required: true,
+      defaultValue: 'Dr. Harper',
+      kind: 'dynamic',
+      sourceFieldId: 'Encounter.Provider',
+      lookup: {
+        enabled: true,
+        multiple: true,
+        options: ['Dr. Harper', 'Dr. Nguyen'],
+      },
+    });
   });
 
   it('ignores stored reports from another mock report id', async () => {
@@ -131,7 +256,7 @@ describe('MockQueryEditorApiService persistence normalization', () => {
       }),
     );
 
-    const service = new MockQueryEditorApiService();
+    const service = TestBed.inject(MockQueryEditorApiService);
     const { report } = await firstValueFrom(service.loadReport(MOCK_REPORT.id));
 
     expect(report.id).toBe(MOCK_REPORT.id);
@@ -155,7 +280,7 @@ describe('MockQueryEditorApiService persistence normalization', () => {
       },
     };
 
-    const service = new MockQueryEditorApiService();
+    const service = TestBed.inject(MockQueryEditorApiService);
 
     await firstValueFrom(service.saveReport(report));
 
@@ -168,6 +293,28 @@ describe('MockQueryEditorApiService persistence normalization', () => {
     expect(storedReport.report?.crosstab.values.map((value) => value.id)).not.toContain(
       'value-stale',
     );
+  });
+
+  it('returns server-style validation and preview responses for mock data', async () => {
+    const service = TestBed.inject(MockQueryEditorApiService);
+    const validation = await firstValueFrom(service.validateReport(MOCK_REPORT));
+    const preview = await firstValueFrom(
+      service.previewReport({
+        report: MOCK_REPORT,
+        queryId: 'main',
+        limit: 2,
+        parameterValues: {},
+      }),
+    );
+
+    expect(validation.status).toBe('valid');
+    expect(validation.issues).toEqual([]);
+    expect(preview.status).toBe('ready');
+    expect(preview.rows.length).toBe(2);
+    expect(preview.columns.map((column) => column.id)).toEqual(
+      MOCK_REPORT.query.columns.filter((column) => column.visible).map((column) => column.id),
+    );
+    expect(preview.generatedSql).toContain('SELECT');
   });
 });
 

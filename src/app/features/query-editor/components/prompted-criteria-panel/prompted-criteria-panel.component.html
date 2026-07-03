@@ -22,6 +22,14 @@
       >
         + Filter
       </button>
+      <button
+        class="button button--secondary"
+        type="button"
+        [disabled]="!activeFilterFieldId()"
+        (click)="addDynamicCriteria()"
+      >
+        + Dynamic Criteria
+      </button>
     </div>
 
     <div class="filter-list">
@@ -123,62 +131,29 @@
           <p>Create a prompt from a filter or add one manually.</p>
         </div>
       } @else {
-        @for (parameter of store.activeQuery().parameters; track parameter.id) {
-          <div class="parameter-row">
-            <label class="parameter-label">
-              Label
-              <input
-                type="text"
-                [value]="parameter.label"
-                (input)="updateParameterLabel(parameter.id, $event)"
-              />
-            </label>
-            <label class="parameter-name">
-              Name
-              <span>
-                @
-                <input
-                  type="text"
-                  [value]="parameter.name"
-                  (input)="updateParameterName(parameter.id, $event)"
-                />
-              </span>
-            </label>
-            <label>
-              Type
-              <select [value]="parameter.type" (change)="updateParameterType(parameter.id, $event)">
-                @for (type of fieldTypes; track type) {
-                  <option [value]="type">{{ type }}</option>
-                }
-              </select>
-            </label>
-            <label>
-              Default
-              <input
-                type="text"
-                [value]="parameter.defaultValue"
-                (input)="updateParameterDefaultValue(parameter.id, $event)"
-              />
-            </label>
-            <label class="toggle-inline">
-              <input
-                type="checkbox"
-                [checked]="parameter.required"
-                (change)="updateParameterRequired(parameter.id, $event)"
-              />
-              Required
-            </label>
-            <button
-              class="icon-button icon-button--danger"
-              type="button"
-              title="Remove parameter"
-              aria-label="Remove parameter"
-              (click)="removeParameter(parameter.id)"
-            >
-              x
-            </button>
-          </div>
-        }
+        <section class="parameter-group">
+          <h3>Static Parameters</h3>
+          @for (parameter of staticParameters(); track parameter.id) {
+            <ng-container
+              [ngTemplateOutlet]="parameterEditor"
+              [ngTemplateOutletContext]="{ parameter: parameter }"
+            />
+          } @empty {
+            <p class="parameter-empty">No static parameters.</p>
+          }
+        </section>
+
+        <section class="parameter-group">
+          <h3>Dynamic Criteria</h3>
+          @for (parameter of dynamicParameters(); track parameter.id) {
+            <ng-container
+              [ngTemplateOutlet]="parameterEditor"
+              [ngTemplateOutletContext]="{ parameter: parameter }"
+            />
+          } @empty {
+            <p class="parameter-empty">No dynamic criteria.</p>
+          }
+        </section>
       }
     </div>
     <div class="parameters-footer">
@@ -187,3 +162,116 @@
     </div>
   </aside>
 </section>
+
+<ng-template #parameterEditor let-parameter="parameter">
+  <div class="parameter-row">
+    <label class="parameter-label">
+      Label
+      <input
+        type="text"
+        [value]="parameter.label"
+        (input)="updateParameterLabel(parameter.id, $event)"
+      />
+    </label>
+    <label class="parameter-name">
+      Name
+      <span>
+        @
+        <input
+          type="text"
+          [value]="parameter.name"
+          (input)="updateParameterName(parameter.id, $event)"
+        />
+      </span>
+    </label>
+    <label>
+      Kind
+      <select
+        [value]="parameter.kind || 'static'"
+        (change)="updateParameterKind(parameter.id, $event)"
+      >
+        <option value="static">static</option>
+        <option value="dynamic">dynamic</option>
+      </select>
+    </label>
+    @if ((parameter.kind || 'static') === 'dynamic') {
+      <label>
+        Source Field
+        <select
+          [value]="parameter.sourceFieldId || ''"
+          (change)="updateParameterSourceField(parameter.id, $event)"
+        >
+          <option value="">No source field</option>
+          @for (field of store.fieldsForSelectedSources(); track field.id) {
+            <option [value]="field.id">{{ field.label }}</option>
+          }
+        </select>
+        <small>{{ sourceFieldLabel(parameter) }}</small>
+      </label>
+    }
+    <label>
+      Type
+      <select
+        [value]="parameter.type"
+        [disabled]="(parameter.kind || 'static') === 'dynamic'"
+        (change)="updateParameterType(parameter.id, $event)"
+      >
+        @for (type of fieldTypes; track type) {
+          <option [value]="type">{{ type }}</option>
+        }
+      </select>
+    </label>
+    <label>
+      Default
+      <input
+        type="text"
+        [value]="parameter.defaultValue"
+        (input)="updateParameterDefaultValue(parameter.id, $event)"
+      />
+    </label>
+    <label class="toggle-inline">
+      <input
+        type="checkbox"
+        [checked]="parameter.required"
+        (change)="updateParameterRequired(parameter.id, $event)"
+      />
+      Required
+    </label>
+    <label class="toggle-inline">
+      <input
+        type="checkbox"
+        [checked]="parameter.lookup?.enabled === true"
+        (change)="updateParameterLookupEnabled(parameter.id, $event)"
+      />
+      Lookup
+    </label>
+    @if (parameter.lookup?.enabled) {
+      <label class="toggle-inline">
+        <input
+          type="checkbox"
+          [checked]="parameter.lookup?.multiple === true"
+          (change)="updateParameterLookupMultiple(parameter.id, $event)"
+        />
+        Multiple
+      </label>
+      <label class="lookup-options-row">
+        Options
+        <textarea
+          class="lookup-options"
+          rows="4"
+          [value]="lookupOptionsText(parameter)"
+          (input)="updateParameterLookupOptions(parameter.id, $event)"
+        ></textarea>
+      </label>
+    }
+    <button
+      class="icon-button icon-button--danger"
+      type="button"
+      title="Remove parameter"
+      aria-label="Remove parameter"
+      (click)="removeParameter(parameter.id)"
+    >
+      x
+    </button>
+  </div>
+</ng-template>

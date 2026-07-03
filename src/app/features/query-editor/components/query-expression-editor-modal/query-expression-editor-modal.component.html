@@ -1,0 +1,37 @@
+<div class="modal-backdrop" role="presentation" (click)="cancel.emit()">
+  <section
+    class="editor-modal"
+    role="dialog"
+    aria-modal="true"
+    [attr.aria-label]="title"
+    (click)="$event.stopPropagation()"
+  >
+    <header>
+      <div>
+        <h2>{{ title }}</h2>
+        @if (helperText) {
+          <p>{{ helperText }}</p>
+        }
+      </div>
+      <button type="button" title="Close" aria-label="Close" (click)="cancel.emit()">x</button>
+    </header>
+
+    <label>
+      {{ label }}
+      <textarea
+        [value]="draft()"
+        [placeholder]="placeholder"
+        rows="8"
+        spellcheck="false"
+        (input)="setDraft($event)"
+        (keydown.meta.enter)="saveDraft()"
+        (keydown.ctrl.enter)="saveDraft()"
+      ></textarea>
+    </label>
+
+    <footer>
+      <button type="button" class="secondary-button" (click)="cancel.emit()">Cancel</button>
+      <button type="button" class="primary-button" (click)="saveDraft()">Apply</button>
+    </footer>
+  </section>
+</div>

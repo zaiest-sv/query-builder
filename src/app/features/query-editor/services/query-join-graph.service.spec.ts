@@ -2,7 +2,10 @@ import { DATA_SOURCE_GROUPS, MOCK_REPORT } from '../data/mock-report-data';
 import { DataSourceField, DataSourceTable, QueryJoin } from '../models/report-definition.model';
 import {
   areJoinConditionsEqual,
+  findConflictingJoinPairIds,
   findDuplicateJoinConditionIds,
+  findDuplicateJoinPairIds,
+  getJoinTablePair,
   QueryJoinGraphService,
   joinTouchesTable,
 } from './query-join-graph.service';
@@ -107,6 +110,52 @@ describe('QueryJoinGraphService', () => {
     expect(duplicateIds.has('condition-2')).toBe(true);
     expect(joinTouchesTable(joins[0] as QueryJoin, 'Patient', fieldLookup)).toBe(true);
     expect(joinTouchesTable(joins[0] as QueryJoin, 'Diagnosis', fieldLookup)).toBe(false);
+  });
+
+  it('detects duplicate and conflicting table-pair joins', () => {
+    const duplicatePairJoins: readonly QueryJoin[] = [
+      ...(joins as QueryJoin[]),
+      {
+        id: 'join-encounter-patient-extra',
+        type: 'left',
+        conditions: [
+          {
+            id: 'join-encounter-patient-extra-condition',
+            fromFieldId: 'Encounter.Minutes',
+            operator: 'equals',
+            toFieldId: 'Patient.Gender',
+          },
+        ],
+      },
+      {
+        id: 'join-encounter-patient-conflict',
+        type: 'inner',
+        conditions: [
+          {
+            id: 'join-encounter-patient-conflict-condition',
+            fromFieldId: 'Encounter.Provider',
+            operator: 'equals',
+            toFieldId: 'Patient.InsuranceType',
+          },
+        ],
+      },
+    ];
+
+    expect(getJoinTablePair(joins[0] as QueryJoin, fieldLookup)).toEqual({
+      key: 'Encounter::Patient',
+      firstTableId: 'Encounter',
+      secondTableId: 'Patient',
+    });
+    expect(Array.from(findDuplicateJoinPairIds(duplicatePairJoins, fieldLookup))).toEqual([
+      'join-encounter-patient',
+      'join-encounter-patient-extra',
+      'join-encounter-patient-conflict',
+    ]);
+    expect(Array.from(findConflictingJoinPairIds(duplicatePairJoins, fieldLookup))).toEqual([
+      'join-encounter-patient',
+      'join-encounter-patient-extra',
+      'join-encounter-patient-conflict',
+    ]);
   });
 
   it('compares join condition values without object identity', () => {

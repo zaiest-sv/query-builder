@@ -171,6 +171,18 @@
                 <span>{{ column.visible ? 'visible' : 'hidden' }}</span>
               </div>
               <label class="input-row">
+                Expression
+                <button
+                  class="text-editor-field"
+                  type="button"
+                  title="Edit expression"
+                  aria-label="Edit column expression"
+                  (click)="openExpressionEditor(column)"
+                >
+                  {{ column.expression }}
+                </button>
+              </label>
+              <label class="input-row">
                 Alias
                 <input
                   type="text"
@@ -209,28 +221,40 @@
               </label>
               <label class="input-row">
                 Criteria
-                <input
-                  type="text"
-                  [value]="column.criteria || ''"
-                  (input)="updateColumnCriteria(column.id, $event)"
-                />
+                <button
+                  class="text-editor-field"
+                  type="button"
+                  title="Edit criteria"
+                  aria-label="Edit column criteria"
+                  (click)="openCriteriaEditor(column)"
+                >
+                  {{ column.criteria || 'Add criteria' }}
+                </button>
               </label>
               <div class="split-input-row">
                 <label class="input-row">
                   Or
-                  <input
-                    type="text"
-                    [value]="column.orCriteria?.[0] || ''"
-                    (input)="updateColumnOrCriteria(column.id, 0, $event)"
-                  />
+                  <button
+                    class="text-editor-field"
+                    type="button"
+                    title="Edit OR criteria 1"
+                    aria-label="Edit column OR criteria 1"
+                    (click)="openOrCriteriaEditor(column, 0)"
+                  >
+                    {{ column.orCriteria?.[0] || 'Add OR' }}
+                  </button>
                 </label>
                 <label class="input-row">
                   Or
-                  <input
-                    type="text"
-                    [value]="column.orCriteria?.[1] || ''"
-                    (input)="updateColumnOrCriteria(column.id, 1, $event)"
-                  />
+                  <button
+                    class="text-editor-field"
+                    type="button"
+                    title="Edit OR criteria 2"
+                    aria-label="Edit column OR criteria 2"
+                    (click)="openOrCriteriaEditor(column, 1)"
+                  >
+                    {{ column.orCriteria?.[1] || 'Add OR' }}
+                  </button>
                 </label>
               </div>
             </section>
@@ -431,4 +455,16 @@
       }
     }
   </div>
+}
+
+@if (activeTextEditor(); as editor) {
+  <app-query-expression-editor-modal
+    [title]="editor.title"
+    [label]="editor.label"
+    [value]="editor.value"
+    [helperText]="editor.helperText"
+    [placeholder]="editor.placeholder"
+    (save)="saveTextEditor($event)"
+    (cancel)="closeTextEditor()"
+  />
 }

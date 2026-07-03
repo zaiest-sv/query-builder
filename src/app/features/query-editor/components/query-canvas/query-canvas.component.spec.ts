@@ -1,8 +1,10 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { of } from 'rxjs';
 import { DATA_SOURCE_GROUPS, MOCK_REPORT, MOCK_ROWS } from '../../data/mock-report-data';
+import { QUERY_TABLE_DRAG_TYPE } from '../../models/query-editor-drag-drop.model';
 import { ReportDefinition } from '../../models/report-definition.model';
 import { QUERY_EDITOR_API, QueryEditorApi } from '../../services/query-editor-api.service';
+import { QueryEditorStore } from '../../services/query-editor-store.service';
 import { QueryCanvasComponent } from './query-canvas.component';
 
 describe('QueryCanvasComponent', () => {
@@ -48,6 +50,25 @@ describe('QueryCanvasComponent', () => {
     expect(element.querySelectorAll('.table-card__header[aria-grabbed]').length).toBe(3);
   });
 
+  it('exposes original table menu actions including wrap into derived table', () => {
+    const element = fixture.nativeElement as HTMLElement;
+    const menuButton = element.querySelector<HTMLButtonElement>('.table-card__menu');
+
+    menuButton?.click();
+    fixture.detectChanges();
+
+    const menuActions = Array.from(element.querySelectorAll('.table-menu button')).map((button) =>
+      button.textContent?.trim(),
+    );
+
+    expect(menuActions).toContain('Hide Unused Fields');
+    expect(menuActions).toContain('Sort Fields Alphabetically');
+    expect(menuActions).toContain('Check All');
+    expect(menuActions).toContain('Uncheck All');
+    expect(menuActions).toContain('Wrap into derived table');
+    expect(menuActions).toContain('Properties');
+  });
+
   it('marks joined field rows on the side where the connector is anchored', () => {
     const element = fixture.nativeElement as HTMLElement;
     const canvas = element.querySelector<HTMLElement>('.query-canvas');
@@ -74,6 +95,32 @@ describe('QueryCanvasComponent', () => {
     expect(fieldRow(element, 'FinancialLedger.EncounterId')?.classList).toContain(
       'canvas-field-row--joined-left',
     );
+  });
+
+  it('drops a datasource table onto the canvas at the pointer position', () => {
+    const element = fixture.nativeElement as HTMLElement;
+    const store = TestBed.inject(QueryEditorStore);
+    const canvas = element.querySelector<HTMLElement>('.query-canvas');
+
+    expect(canvas).toBeTruthy();
+    expect(store.report().query.sourceTableIds).not.toContain('Diagnosis');
+
+    setElementRect(canvas, rect(100, 120, 900, 520));
+    canvas?.dispatchEvent(
+      createTableDropEvent('Diagnosis', {
+        clientX: 360,
+        clientY: 300,
+      }),
+    );
+    fixture.detectChanges();
+
+    expect(store.report().query.sourceTableIds).toContain('Diagnosis');
+    expect(store.canvasTablePositions().get('Diagnosis')).toEqual({
+      tableId: 'Diagnosis',
+      x: 236,
+      y: 156,
+    });
+    expect(store.canvasSelection()).toEqual({ kind: 'table', tableId: 'Diagnosis' });
   });
 });
 
@@ -124,4 +171,34 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
     bottom: top + height,
     toJSON: () => ({}),
   };
+}
+
+function createTableDropEvent(
+  tableId: string,
+  position: Pick<MouseEvent, 'clientX' | 'clientY'>,
+): DragEvent {
+  const event = new Event('drop', { bubbles: true, cancelable: true }) as DragEvent;
+  const data = new Map<string, string>([
+    [QUERY_TABLE_DRAG_TYPE, JSON.stringify({ tableId })],
+    ['text/plain', tableId],
+  ]);
+
+  Object.defineProperty(event, 'clientX', {
+    configurable: true,
+    value: position.clientX,
+  });
+  Object.defineProperty(event, 'clientY', {
+    configurable: true,
+    value: position.clientY,
+  });
+  Object.defineProperty(event, 'dataTransfer', {
+    configurable: true,
+    value: {
+      dropEffect: 'copy',
+      getData: (type: string) => data.get(type) ?? '',
+      setData: (type: string, value: string) => data.set(type, value),
+    },
+  });
+
+  return event;
 }

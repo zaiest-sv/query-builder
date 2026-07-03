@@ -357,6 +357,12 @@ export class QueryCanvasComponent implements AfterViewInit {
     this.activeTableMenuId.set(null);
   }
 
+  protected wrapIntoDerivedTable(tableId: string): void {
+    this.store.wrapSourceTableIntoDerivedTable(tableId);
+    this.activeTableMenuId.set(null);
+    this.scheduleJoinPathRefresh();
+  }
+
   protected startJoinPointerDrag(fieldId: string, event: PointerEvent): void {
     if (isInteractiveTarget(event.target)) {
       return;
